@@ -26,48 +26,54 @@
     </div>
   </header>
 
-  <!-- HOME VIEW -->
-  <main id="viewHome" class="view active">
+  <!-- UPLOAD SCREEN (shown when no diary loaded) -->
+  <div id="uploadScreen" class="upload-screen" style="display:none;">
+    <div class="upload-box">
+      <div class="upload-icon">🎬</div>
+      <h2 class="upload-title">drwitte / films</h2>
+      <p class="upload-desc">Upload your Letterboxd diary export to get started.<br/>Your data stays in your browser — nothing is sent anywhere.</p>
+      <label class="upload-btn" for="csvInput">Choose diary.csv</label>
+      <input type="file" id="csvInput" accept=".csv" style="display:none;" />
+      <p class="upload-hint">Export from Letterboxd → Settings → Import & Export → Export Your Data</p>
+      <button class="upload-clear-btn" id="clearDataBtn" style="display:none;">Clear saved data & re-upload</button>
+    </div>
+  </div>
 
-    <!-- HERO SPLIT -->
+  <!-- HOME VIEW -->
+  <main id="viewHome" class="view" style="display:none;">
     <section class="hero-split">
       <div class="hero-left">
         <p class="hero-eyebrow">The archive</p>
-        <h1 class="hero-title">712<br/><span class="hero-sub">films watched</span></h1>
+        <h1 class="hero-title"><span id="heroTotal">—</span><br/><span class="hero-sub">films watched</span></h1>
         <div class="hero-stats-row">
-          <div class="hero-stat"><span class="hs-val" id="heroRated">645</span><span class="hs-label">rated</span></div>
+          <div class="hero-stat"><span class="hs-val" id="heroRated">—</span><span class="hs-label">rated</span></div>
           <div class="hero-stat"><span class="hs-val" id="heroAvg">—</span><span class="hs-label">avg rating</span></div>
-          <div class="hero-stat"><span class="hs-val" id="heroFives">27</span><span class="hs-label">five stars</span></div>
+          <div class="hero-stat"><span class="hs-val" id="heroFives">—</span><span class="hs-label">five stars</span></div>
         </div>
-        <p class="hero-desc">Three years of watching. Logged on Letterboxd, enriched with TMDB. Heavy on comedy, soft spot for 2004–2014.</p>
+        <p class="hero-desc" id="heroDesc"></p>
         <div class="hero-cta-row">
           <button class="cta-primary" onclick="switchView('wall')">Browse poster wall →</button>
           <button class="cta-secondary" onclick="switchView('stats')">See stats →</button>
         </div>
       </div>
-      <div class="hero-right" id="heroPosters">
-        <div class="poster-mosaic" id="posterMosaic">
-          <!-- filled by JS -->
-        </div>
+      <div class="hero-right">
+        <div class="poster-mosaic" id="posterMosaic"></div>
       </div>
     </section>
 
-    <!-- RECENT WATCHES -->
     <section class="section">
       <h2 class="section-title">Recent watches</h2>
       <div class="recent-grid" id="recentGrid"></div>
     </section>
 
-    <!-- TOP RATED -->
     <section class="section">
       <h2 class="section-title">Five-star films</h2>
       <div class="five-star-list" id="fiveStarList"></div>
     </section>
-
   </main>
 
   <!-- POSTER WALL VIEW -->
-  <main id="viewWall" class="view">
+  <main id="viewWall" class="view" style="display:none;">
     <div class="wall-controls">
       <input type="text" id="wallSearch" placeholder="Search films…" oninput="filterWall()" />
       <select id="wallSort" onchange="filterWall()">
@@ -91,41 +97,29 @@
   </main>
 
   <!-- STATS VIEW -->
-  <main id="viewStats" class="view">
+  <main id="viewStats" class="view" style="display:none;">
     <div class="stats-layout">
-
       <div class="stat-card wide">
         <h3 class="stat-card-title">Watches over time</h3>
         <div class="chart-wrap" id="chartTimeline"></div>
       </div>
-
       <div class="stat-card">
         <h3 class="stat-card-title">Rating distribution</h3>
         <div class="chart-wrap" id="chartRatings"></div>
       </div>
-
       <div class="stat-card">
         <h3 class="stat-card-title">Films by release decade</h3>
         <div class="chart-wrap" id="chartDecades"></div>
       </div>
-
       <div class="stat-card wide">
         <h3 class="stat-card-title">Genre breakdown</h3>
         <p class="stat-note" id="genreNote">Connect TMDB to see genre data</p>
         <div class="chart-wrap" id="chartGenres"></div>
       </div>
-
-      <div class="stat-card">
-        <h3 class="stat-card-title">Your ratings vs TMDB</h3>
-        <p class="stat-note" id="vsNote">Connect TMDB to compare</p>
-        <div class="chart-wrap" id="chartVsTmdb"></div>
-      </div>
-
       <div class="stat-card">
         <h3 class="stat-card-title">Watch pace by month</h3>
         <div class="chart-wrap" id="chartMonths"></div>
       </div>
-
     </div>
   </main>
 
@@ -137,7 +131,6 @@
     </div>
   </div>
 
-  <script src="diary.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

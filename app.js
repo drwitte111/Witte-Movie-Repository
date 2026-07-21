@@ -71,7 +71,7 @@ function handleCsvUpload(e) {
   reader.onload = evt => {
     try {
       const records = parseLetterboxdCsv(evt.target.result);
-      if (!records.length) throw new Error('No watched films found');
+      if (!records.length) throw new Error('No films found in this export');
       DIARY = records;
       localStorage.setItem('diary_data', JSON.stringify(DIARY));
       showApp();
@@ -176,12 +176,16 @@ function showApp() {
   const toYear   = dates[0]?.slice(0, 4);
   const yearRange = fromYear === toYear ? fromYear : `${fromYear}–${toYear}`;
   document.getElementById('heroDesc').textContent =
-    `${DIARY.length} films watched across ${yearRange}. Logged on Letterboxd, enriched with TMDB.`;
+    `${DIARY.length} films purchased across ${yearRange}. Logged on Letterboxd, enriched with TMDB.`;
 
   renderMosaic();
   renderRecent();
   renderFiveStars();
   renderStats();
+
+  // Init web explorer and game (defined in web.js)
+  if (typeof initWebExplorer === 'function') initWebExplorer();
+  if (typeof initGame        === 'function') initGame();
 }
 
 /* =============================================
@@ -216,7 +220,7 @@ function markTokenConnected() {
    VIEWS
    ============================================= */
 function switchView(view) {
-  ['home','wall','stats'].forEach(v => {
+  ['home','wall','stats','web','game'].forEach(v => {
     const el = document.getElementById('view' + v.charAt(0).toUpperCase() + v.slice(1));
     if (el) el.style.display = v === view ? 'block' : 'none';
   });

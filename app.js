@@ -13,6 +13,34 @@ try {
 } catch(e) { TMDB_CACHE = {}; }
 
 /* =============================================
+   TMDB CREDITS CACHE
+   ============================================= */
+const CREDITS_CACHE = {};
+
+async function fetchCredits(film) {
+  const key = `${film.name}|${film.year}`;
+  if (CREDITS_CACHE[key]) return CREDITS_CACHE[key];
+  if (!BEARER) return null;
+
+  try {
+    const tmdb = await fetchTMDB(film);
+    if (!tmdb?.id) return null;
+
+    const r = await fetch(`https://api.themoviedb.org/3/movie/${tmdb.id}/credits`,
+      { headers: { Authorization: `Bearer ${BEARER}` } });
+    const data = await r.json();
+
+    const result = {
+      cast:     (data.cast || []).slice(0, 10).map(p => p.name),
+      director: (data.crew || []).filter(p => p.job === 'Director').map(p => p.name),
+      writer:   (data.crew || []).filter(p => ['Writer','Screenplay','Story'].includes(p.job)).slice(0,3).map(p => p.name),
+    };
+    CREDITS_CACHE[key] = result;
+    return result;
+  } catch(e) { return null; }
+}
+
+/* =============================================
    INIT
    ============================================= */
 document.addEventListener('DOMContentLoaded', () => {
@@ -556,7 +584,7 @@ async function openModal(film) {
     </div>
   `;
 
-  const tmdb = await fetchTMDB(film);
+  const [tmdb, credits] = await Promise.all([fetchTMDB(film), fetchCredits(film)]);
 
   const myStars = film.rating >= 1 ? film.rating * 2 : null;
   let diffBadge = '';
@@ -569,6 +597,9 @@ async function openModal(film) {
 
   const backdropSrc = tmdb?.backdrop ? `${IMG}w780${tmdb.backdrop}` : null;
   const posterSrc   = tmdb?.poster   ? `${IMG}w200${tmdb.poster}`   : null;
+
+  const directorStr = credits?.director?.length ? credits.director.join(', ') : null;
+  const castStr     = credits?.cast?.length     ? credits.cast.slice(0, 5).join(', ') : null;
 
   inner.innerHTML = `
     ${backdropSrc
@@ -587,6 +618,8 @@ async function openModal(film) {
           ${diffBadge}
         </div>
         ${tmdb?.genres?.length ? `<div class="modal-genres">${tmdb.genres.map(g => `<span class="genre-pill">${escapeHtml(g)}</span>`).join('')}</div>` : ''}
+        ${directorStr ? `<div class="modal-credit"><span class="modal-credit-label">Director</span> ${escapeHtml(directorStr)}</div>` : ''}
+        ${castStr     ? `<div class="modal-credit"><span class="modal-credit-label">Cast</span> ${escapeHtml(castStr)}</div>` : ''}
         <div class="modal-overview">${escapeHtml(tmdb?.overview || 'No overview available.')}</div>
         <div class="modal-links">
           ${film.letterboxd ? `<a href="${escapeHtml(film.letterboxd)}" target="_blank" rel="noopener">View on Letterboxd →</a>` : ''}

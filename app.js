@@ -12,6 +12,13 @@ try {
   TMDB_CACHE = JSON.parse(localStorage.getItem('tmdb_cache') || '{}');
 } catch(e) { TMDB_CACHE = {}; }
 
+// Merge pre-built cache from cache.js if available
+if (typeof TMDB_PRECACHE !== 'undefined') {
+  for (const key in TMDB_PRECACHE) {
+    if (!(key in TMDB_CACHE)) TMDB_CACHE[key] = TMDB_PRECACHE[key];
+  }
+}
+
 /* =============================================
    TMDB CREDITS CACHE
    ============================================= */

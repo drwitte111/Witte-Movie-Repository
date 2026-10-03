@@ -3,7 +3,8 @@
    ============================================= */
 const IMG       = 'https://image.tmdb.org/t/p/';
 const TMDB_API  = 'https://api.themoviedb.org/3';
-const DIARY_URL = 'diary.csv';
+const DIARY_URL   = 'diary.csv';
+const RATINGS_URL = 'ratings.csv';   // optional: current film ratings from the same Letterboxd export
 
 const LS = {
   token:   'tmdb_token',
@@ -53,10 +54,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-  // Prefer the diary.csv published with the site, then a previously uploaded export
-  const csv = await fetchRepoDiary();
-  if (csv) {
-    setDiary(parseLetterboxdCsv(csv));
+  // Prefer the CSVs published with the site, then a previously uploaded export
+  const [diaryCsv, ratingsCsv] = await Promise.all([fetchCsv(DIARY_URL), fetchCsv(RATINGS_URL)]);
+  if (diaryCsv) {
+    setDiary(applyRatings(parseLetterboxdCsv(diaryCsv), ratingsCsv));
     return showApp();
   }
 
@@ -77,9 +78,9 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 
-async function fetchRepoDiary() {
+async function fetchCsv(url) {
   try {
-    const r = await fetch(DIARY_URL, { cache: 'no-cache' });
+    const r = await fetch(url, { cache: 'no-cache' });
     if (!r.ok) return null;
     const text = await r.text();
     return text.startsWith('Date,') ? text : null;
@@ -105,27 +106,48 @@ function showUploadScreen() {
   }
 }
 
-function handleCsvUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = evt => {
-    try {
-      const records = parseLetterboxdCsv(evt.target.result);
-      if (!records.length) throw new Error('No films found in this export');
-      setDiary(records);
-      localStorage.setItem(LS.diary, JSON.stringify(DIARY));
-      showApp();
-    } catch (err) {
-      const box = document.querySelector('.upload-box');
-      box.querySelector('.upload-error')?.remove();
-      const msg = document.createElement('p');
-      msg.className = 'upload-error';
-      msg.textContent = 'Could not read file: ' + err.message;
-      box.appendChild(msg);
-    }
-  };
-  reader.readAsText(file);
+// Accepts diary.csv alone, or diary.csv + ratings.csv selected together
+async function handleCsvUpload(e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  try {
+    const texts   = await Promise.all(files.map(f => f.text()));
+    const diary   = texts.find(t => firstLine(t).includes('Watched Date'));
+    const ratings = texts.find(t => t !== diary && firstLine(t).includes('Rating'));
+    if (!diary) throw new Error('Choose your diary.csv (and optionally ratings.csv)');
+    const records = applyRatings(parseLetterboxdCsv(diary), ratings);
+    if (!records.length) throw new Error('No films found in this export');
+    setDiary(records);
+    localStorage.setItem(LS.diary, JSON.stringify(DIARY));
+    showApp();
+  } catch (err) {
+    const box = document.querySelector('.upload-box');
+    box.querySelector('.upload-error')?.remove();
+    const msg = document.createElement('p');
+    msg.className = 'upload-error';
+    msg.textContent = 'Could not read file: ' + err.message;
+    box.appendChild(msg);
+  }
+}
+
+const firstLine = text => text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0];
+
+// ratings.csv holds each film's current rating, which can differ from (or fill in)
+// the rating saved on its diary entry, so it wins wherever present
+function applyRatings(records, ratingsText) {
+  if (!ratingsText) return records;
+  const rows = parseCsv(ratingsText.replace(/^\uFEFF/, ''));
+  const header = (rows[0] || []).map(h => h.trim());
+  const [iName, iYear, iRating] = ['Name', 'Year', 'Rating'].map(h => header.indexOf(h));
+  if (iName < 0 || iRating < 0) return records;
+
+  const current = new Map();
+  rows.slice(1).forEach(cols => {
+    const rating = parseFloat(cols[iRating]);
+    const year   = parseInt(cols[iYear], 10);
+    if (!isNaN(rating)) current.set(filmKey({ name: (cols[iName] || '').trim(), year: isNaN(year) ? null : year }), rating);
+  });
+  return records.map(f => current.has(filmKey(f)) ? { ...f, rating: current.get(filmKey(f)) } : f);
 }
 
 function parseLetterboxdCsv(text) {

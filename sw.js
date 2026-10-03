@@ -14,6 +14,7 @@ const SHELL = [
   'app.js',
   'web.js',
   'diary.csv',
+  'ratings.csv',
   'manifest.webmanifest',
   'icons/apple-touch-icon.png',
   'icons/icon-192.png',

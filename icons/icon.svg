@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0a0a0b"/>
+  <g fill="#1a1a1e">
+    <rect x="56" y="64" width="400" height="384" rx="28"/>
+  </g>
+  <g fill="#0a0a0b">
+    <rect x="76" y="90" width="28" height="22" rx="4"/>
+    <rect x="76" y="142" width="28" height="22" rx="4"/>
+    <rect x="76" y="194" width="28" height="22" rx="4"/>
+    <rect x="76" y="246" width="28" height="22" rx="4"/>
+    <rect x="76" y="298" width="28" height="22" rx="4"/>
+    <rect x="76" y="350" width="28" height="22" rx="4"/>
+    <rect x="76" y="402" width="28" height="22" rx="4"/>
+    <rect x="408" y="90" width="28" height="22" rx="4"/>
+    <rect x="408" y="142" width="28" height="22" rx="4"/>
+    <rect x="408" y="194" width="28" height="22" rx="4"/>
+    <rect x="408" y="246" width="28" height="22" rx="4"/>
+    <rect x="408" y="298" width="28" height="22" rx="4"/>
+    <rect x="408" y="350" width="28" height="22" rx="4"/>
+    <rect x="408" y="402" width="28" height="22" rx="4"/>
+  </g>
+  <text x="162" y="330" text-anchor="middle" font-family="DejaVu Serif, Georgia, serif" font-style="italic" font-weight="bold" font-size="190" fill="#e8e0cc">d</text>
+  <text x="358" y="330" text-anchor="middle" font-family="DejaVu Serif, Georgia, serif" font-style="italic" font-weight="bold" font-size="190" fill="#e8e0cc">f</text>
+  <path d="M300 120 L236 392" stroke="#c8971a" stroke-width="30" stroke-linecap="round"/>
+</svg>

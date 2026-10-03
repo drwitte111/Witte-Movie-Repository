@@ -7,6 +7,8 @@
 const SVG_NS     = 'http://www.w3.org/2000/svg';
 const MAX_NODES  = 12;
 const MAX_FETCH  = 30;   // uncached films looked up per web build
+const MOBILE_NODES = 8;
+const MIN_CANVAS   = 480; // smallest side, in SVG units, the web is laid out on
 const COLORS = {
   gold:   '#c8971a',
   line:   '#2a2a32',
@@ -75,6 +77,8 @@ function svgEl(tag, attrs = {}, text) {
 }
 
 function svgMessage(svg, text) {
+  svg._lastRender = null;
+  svg.removeAttribute('viewBox');
   svg.innerHTML = '';
   svg.appendChild(svgEl('text', {
     x: '50%', y: '50%', 'text-anchor': 'middle', fill: COLORS.muted,
@@ -101,9 +105,17 @@ function svgPoster(defs, clipId, film, x, y, r, fallbackLen, fallbackSize, fallb
 }
 
 function renderWeb(centerFilm, nodes, svg, onNodeClick, highlightKey = null) {
+  svg._lastRender = [centerFilm, nodes, svg, onNodeClick, highlightKey];
   svg.innerHTML = '';
-  const W  = svg.clientWidth  || 900;
-  const H  = svg.clientHeight || 600;
+  // On narrow screens draw on a larger virtual canvas and let the viewBox scale it down,
+  // and show fewer satellites so posters stay tappable
+  const cw    = svg.clientWidth  || 900;
+  const ch    = svg.clientHeight || 600;
+  const scale = Math.max(1, MIN_CANVAS / Math.min(cw, ch));
+  const W  = cw * scale;
+  const H  = ch * scale;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  if (cw < 600) nodes = nodes.slice(0, MOBILE_NODES);
   const cx = W / 2;
   const cy = H / 2;
   const R  = Math.min(W, H) * 0.36;
@@ -133,7 +145,8 @@ function renderWeb(centerFilm, nodes, svg, onNodeClick, highlightKey = null) {
       stroke: hl ? COLORS.gold : COLORS.line, 'stroke-width': hl ? 2 : 1,
     }));
     svg.appendChild(svgEl('text', {
-      x: (cx + n._x) / 2, y: (cy + n._y) / 2, 'text-anchor': 'middle',
+      // Past the midpoint so labels clear the center film's title
+      x: cx + (n._x - cx) * 0.62, y: cy + (n._y - cy) * 0.62, 'text-anchor': 'middle',
       'font-size': 9, fill: COLORS.muted, 'font-family': 'DM Mono, monospace',
     }, n.shared.slice(0, 2).join(', ')));
   });
@@ -178,6 +191,18 @@ function renderWeb(centerFilm, nodes, svg, onNodeClick, highlightKey = null) {
   }, centerFilm.name.length > 22 ? centerFilm.name.slice(0, 22) + '…' : centerFilm.name));
   svg.appendChild(cg);
 }
+
+// Redraw visible webs after rotation / resize
+let webResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(webResizeTimer);
+  webResizeTimer = setTimeout(() => {
+    ['webSvg', 'gameSvg'].forEach(id => {
+      const svg = document.getElementById(id);
+      if (svg?._lastRender && svg.clientWidth) renderWeb(...svg._lastRender);
+    });
+  }, 200);
+});
 
 /* =============================================
    WEB EXPLORER
@@ -401,7 +426,8 @@ function attachFilmSearch(inputId, resultsId, onSelect) {
     else if (e.key === 'Escape')  hide();
   });
 
-  document.addEventListener('click', e => {
+  // pointerdown fires reliably on iOS, where taps on non-clickable areas don't send click
+  document.addEventListener('pointerdown', e => {
     if (!results.contains(e.target) && e.target !== input) hide();
   });
 }

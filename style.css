@@ -223,7 +223,8 @@ input, select { font-family: inherit; }
 }
 .mosaic-poster:hover { transform: scale(1.03); z-index: 2; }
 .mosaic-poster img { width: 100%; height: 100%; object-fit: cover; }
-.mosaic-poster.no-img {
+.mosaic-poster .no-img {
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -877,4 +878,99 @@ input, select { font-family: inherit; }
   letter-spacing: 0.08em;
   color: var(--muted);
   margin-right: 6px;
+}
+
+/* =============================================
+   TOUCH / iPHONE / HOME-SCREEN APP
+   ============================================= */
+html { -webkit-text-size-adjust: 100%; }
+body {
+  -webkit-tap-highlight-color: transparent;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+[data-film] { cursor: pointer; }
+/* Status bar sits over the header when launched from the home screen */
+.site-header { padding-top: env(safe-area-inset-top); }
+.upload-screen { min-height: 100dvh; }
+.modal-overlay { overscroll-behavior: contain; }
+.modal { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; max-height: 90dvh; }
+
+/* Hover lift/overlays only where a real pointer exists — avoids sticky hover after taps */
+@media (hover: none) {
+  .wall-card:hover, .mosaic-poster:hover { transform: none; }
+  .nav-btn:hover { background: none; color: var(--muted); }
+  .nav-btn.active:hover { color: var(--cream); background: var(--surface3); }
+}
+
+@media (max-width: 900px) {
+  /* Header wraps: wordmark + token on top, scrollable nav underneath */
+  .header-inner { flex-wrap: wrap; height: auto; padding: 10px 1rem 0; gap: 8px 12px; }
+  .wordmark { flex: 1; }
+  .header-token { display: flex; }
+  .header-token input { width: 150px; }
+  .header-nav {
+    order: 3;
+    flex: 1 0 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;
+    margin: 0 -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .header-nav::-webkit-scrollbar { display: none; }
+  .nav-btn { flex-shrink: 0; font-size: 14px; padding: 8px 12px; }
+}
+
+@media (max-width: 600px) {
+  /* iOS zooms into inputs smaller than 16px */
+  input, select, .header-token input, .wall-controls input, .wall-controls select,
+  .web-toolbar input, .web-toolbar select, .web-search-wrap input { font-size: 16px; }
+  .header-token input { width: 0; flex: 1; min-width: 110px; padding: 6px 10px; }
+  #tokenSave { padding: 6px 10px; }
+
+  .hero-split { padding: 1.25rem 1rem 2rem; gap: 2rem; }
+  .hero-title { font-size: 4.5rem; }
+  .hero-stats-row { gap: 1.25rem; flex-wrap: wrap; margin: 1.25rem 0; padding: 1rem 0; }
+  .hs-val { font-size: 1.7rem; }
+  .poster-mosaic { grid-template-columns: repeat(5, 1fr); }
+  .mosaic-poster:nth-child(n+11) { display: none; }   /* two rows so the stats stay near the top */
+  .hero-cta-row { flex-wrap: wrap; }
+  .section { padding-left: 1rem; padding-right: 1rem; }
+
+  .wall-controls { padding: 1rem; }
+  .wall-controls input { min-width: 100%; }
+  .wall-controls select { flex: 1; min-width: 0; }
+  .wall-count { padding: 0 1rem 0.5rem; }
+
+  .stats-layout { padding: 1rem; }
+  .bar-label { width: 64px; }
+
+  /* Modal becomes a bottom sheet */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    max-width: none;
+    max-height: 92dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .modal-close { width: 36px; height: 36px; font-size: 14px; }
+  .modal-body { gap: 1rem; padding: 1rem; }
+  .modal-poster { width: 84px; height: 126px; }
+
+  .web-toolbar { padding: 1rem; }
+  .web-search-wrap, .web-toolbar select { flex: 1 1 100%; }
+  .web-search-wrap input { width: 100%; }
+  .web-breadcrumb { padding: 0 1rem 0.5rem; }
+  .web-canvas-wrap { padding: 0 0.5rem 1rem; }
+  .web-svg { height: min(68dvh, 520px); }
+
+  .game-layout { padding: 1rem; }
+  .game-arrow { transform: rotate(90deg); margin: 0 auto; }
+  .game-pick-card { min-width: 100%; }
+  .game-setup-actions { flex-wrap: wrap; }
+  .game-hud { gap: 1rem; padding: 0.75rem 1rem; }
 }

@@ -72,6 +72,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   showUploadScreen();
 });
 
+// Offline support + "Add to Home Screen" app (needs https or localhost)
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+
 async function fetchRepoDiary() {
   try {
     const r = await fetch(DIARY_URL, { cache: 'no-cache' });

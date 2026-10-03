@@ -1,16 +1,25 @@
 /* =============================================
    STATE
    ============================================= */
-let DIARY  = [];
-let BEARER = localStorage.getItem('tmdb_token') || '';
-let TMDB_CACHE = {};
-let wallFiltered = [];
+const IMG       = 'https://image.tmdb.org/t/p/';
+const TMDB_API  = 'https://api.themoviedb.org/3';
+const DIARY_URL = 'diary.csv';
 
-const IMG = 'https://image.tmdb.org/t/p/';
+const LS = {
+  token:   'tmdb_token',
+  diary:   'diary_data',
+  tmdb:    'tmdb_cache',
+  credits: 'tmdb_credits',
+};
 
-try {
-  TMDB_CACHE = JSON.parse(localStorage.getItem('tmdb_cache') || '{}');
-} catch(e) { TMDB_CACHE = {}; }
+let DIARY   = [];   // every logged film (the whole collection)
+let WATCHED = [];   // films with a rating: 0.5 = seen/unrated, 1–5 = rated
+let FILM_BY_ID = new Map();
+let BEARER  = localStorage.getItem(LS.token) || '';
+
+const TMDB_CACHE    = loadJson(LS.tmdb);
+const CREDITS_CACHE = loadJson(LS.credits);
+const INFLIGHT      = new Map();
 
 // Merge pre-built cache from cache.js if available
 if (typeof TMDB_PRECACHE !== 'undefined') {
@@ -20,83 +29,75 @@ if (typeof TMDB_PRECACHE !== 'undefined') {
 }
 
 /* =============================================
-   TMDB CREDITS CACHE
-   ============================================= */
-const CREDITS_CACHE = {};
-
-async function fetchCredits(film) {
-  const key = `${film.name}|${film.year}`;
-  if (CREDITS_CACHE[key]) return CREDITS_CACHE[key];
-  if (!BEARER) return null;
-
-  try {
-    const tmdb = await fetchTMDB(film);
-    if (!tmdb?.id) return null;
-
-    const r = await fetch(`https://api.themoviedb.org/3/movie/${tmdb.id}/credits`,
-      { headers: { Authorization: `Bearer ${BEARER}` } });
-    const data = await r.json();
-
-    const result = {
-      cast:     (data.cast || []).slice(0, 10).map(p => p.name),
-      director: (data.crew || []).filter(p => p.job === 'Director').map(p => p.name),
-      writer:   (data.crew || []).filter(p => ['Writer','Screenplay','Story'].includes(p.job)).slice(0,3).map(p => p.name),
-    };
-    CREDITS_CACHE[key] = result;
-    return result;
-  } catch(e) { return null; }
-}
-
-/* =============================================
    INIT
    ============================================= */
-document.addEventListener('DOMContentLoaded', () => {
-
-  // Token UI
+document.addEventListener('DOMContentLoaded', async () => {
   if (BEARER) markTokenConnected();
   document.getElementById('tokenSave').addEventListener('click', handleTokenSave);
 
-  // Nav
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
-  // CSV input
   document.getElementById('csvInput').addEventListener('change', handleCsvUpload);
-
-  // Clear data button
   document.getElementById('clearDataBtn').addEventListener('click', () => {
     if (!confirm('Clear your saved diary and start over?')) return;
-    localStorage.removeItem('diary_data');
-    localStorage.removeItem('tmdb_cache');
-    DIARY = [];
-    TMDB_CACHE = {};
-    showUploadScreen();
+    localStorage.removeItem(LS.diary);
+    location.reload();
   });
 
-  // Check for saved diary
-  const saved = localStorage.getItem('diary_data');
+  // Any element with data-film opens that film's modal
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-film]');
+    if (el && FILM_BY_ID.has(el.dataset.film)) openModal(FILM_BY_ID.get(el.dataset.film));
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  // Prefer the diary.csv published with the site, then a previously uploaded export
+  const csv = await fetchRepoDiary();
+  if (csv) {
+    setDiary(parseLetterboxdCsv(csv));
+    return showApp();
+  }
+
+  const saved = localStorage.getItem(LS.diary);
   if (saved) {
     try {
-      DIARY = JSON.parse(saved);
-      showApp();
-    } catch(e) {
-      localStorage.removeItem('diary_data');
-      showUploadScreen();
+      setDiary(JSON.parse(saved));
+      return showApp();
+    } catch (e) {
+      localStorage.removeItem(LS.diary);
     }
-  } else {
-    showUploadScreen();
   }
+  showUploadScreen();
 });
+
+async function fetchRepoDiary() {
+  try {
+    const r = await fetch(DIARY_URL, { cache: 'no-cache' });
+    if (!r.ok) return null;
+    const text = await r.text();
+    return text.startsWith('Date,') ? text : null;
+  } catch (e) {
+    return null;   // e.g. opened via file://
+  }
+}
+
+function setDiary(records) {
+  DIARY = records.map((f, i) => ({ ...f, id: f.id || String(i) }));
+  WATCHED = DIARY.filter(isWatched);
+  FILM_BY_ID = new Map(DIARY.map(f => [f.id, f]));
+}
 
 /* =============================================
    UPLOAD / CSV PARSE
    ============================================= */
 function showUploadScreen() {
+  document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
   document.getElementById('uploadScreen').style.display = 'flex';
-  document.getElementById('viewHome').style.display = 'none';
-  document.getElementById('viewWall').style.display = 'none';
-  document.getElementById('viewStats').style.display = 'none';
+  if (localStorage.getItem(LS.diary)) {
+    document.getElementById('clearDataBtn').style.display = 'inline-block';
+  }
 }
 
 function handleCsvUpload(e) {
@@ -107,13 +108,12 @@ function handleCsvUpload(e) {
     try {
       const records = parseLetterboxdCsv(evt.target.result);
       if (!records.length) throw new Error('No films found in this export');
-      DIARY = records;
-      localStorage.setItem('diary_data', JSON.stringify(DIARY));
+      setDiary(records);
+      localStorage.setItem(LS.diary, JSON.stringify(DIARY));
       showApp();
-    } catch(err) {
+    } catch (err) {
       const box = document.querySelector('.upload-box');
-      const existing = box.querySelector('.upload-error');
-      if (existing) existing.remove();
+      box.querySelector('.upload-error')?.remove();
       const msg = document.createElement('p');
       msg.className = 'upload-error';
       msg.textContent = 'Could not read file: ' + err.message;
@@ -124,64 +124,71 @@ function handleCsvUpload(e) {
 }
 
 function parseLetterboxdCsv(text) {
-  const lines = text.split('\n');
-  if (!lines.length) return [];
+  const rows = parseCsv(text.replace(/^﻿/, ''));
+  if (rows.length < 2) return [];
 
-  // Parse header
-  const header = parseCsvLine(lines[0]).map(h => h.trim());
+  const header = rows[0].map(h => h.trim());
+  const col = name => header.indexOf(name);
   const idx = {
-    name:        header.indexOf('Name'),
-    year:        header.indexOf('Year'),
-    rating:      header.indexOf('Rating'),
-    watchedDate: header.indexOf('Watched Date'),
-    letterboxd:  header.indexOf('Letterboxd URI'),
+    date:        col('Date'),
+    name:        col('Name'),
+    year:        col('Year'),
+    rating:      col('Rating'),
+    watchedDate: col('Watched Date'),
+    letterboxd:  col('Letterboxd URI'),
   };
+  if (idx.name < 0) throw new Error('Missing "Name" column — is this a Letterboxd diary export?');
+
+  const get = (cols, i) => (i >= 0 ? (cols[i] || '').trim() : '');
 
   const records = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const cols = parseCsvLine(line);
-
-    const ratingRaw = parseFloat(cols[idx.rating]);
-    const rating = isNaN(ratingRaw) ? null : ratingRaw;
-
-    // Only include watched: 0.5 (seen/unrated) or 1-5 (rated)
-    if (rating === null) continue;
-
-    const yearRaw = parseInt(cols[idx.year]);
+  rows.slice(1).forEach((cols, row) => {
+    const name = get(cols, idx.name);
+    if (!name) return;
+    const rating = parseFloat(get(cols, idx.rating));
+    const year   = parseInt(get(cols, idx.year), 10);
     records.push({
-      name:        (cols[idx.name] || '').trim(),
-      year:        isNaN(yearRaw) ? null : yearRaw,
-      rating:      rating,
-      watchedDate: (cols[idx.watchedDate] || '').trim(),
-      letterboxd:  (cols[idx.letterboxd] || '').trim() || null,
+      row,
+      name,
+      year:        isNaN(year) ? null : year,
+      rating:      isNaN(rating) ? null : rating,
+      loggedDate:  get(cols, idx.date),
+      watchedDate: get(cols, idx.watchedDate) || get(cols, idx.date),
+      letterboxd:  get(cols, idx.letterboxd) || null,
     });
-  }
+  });
 
-  // Sort newest watched first
-  records.sort((a, b) => b.watchedDate.localeCompare(a.watchedDate));
+  // Newest first; entries logged on the same day keep their latest-logged-first order
+  records.sort((a, b) => b.watchedDate.localeCompare(a.watchedDate) || b.row - a.row);
   return records;
 }
 
-function parseCsvLine(line) {
-  // Handles quoted fields with commas inside
-  const result = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i+1] === '"') { cur += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
-      result.push(cur); cur = '';
+// RFC 4180 parser: quoted fields may contain commas, quotes and newlines
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cur = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQuotes = false;
+      else cur += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cur); cur = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(c => c !== '')) rows.push(row);
+      row = [];
     } else {
       cur += ch;
     }
   }
-  result.push(cur);
-  return result;
+  row.push(cur);
+  if (row.some(c => c !== '')) rows.push(row);
+  return rows;
 }
 
 /* =============================================
@@ -189,38 +196,38 @@ function parseCsvLine(line) {
    ============================================= */
 function showApp() {
   document.getElementById('uploadScreen').style.display = 'none';
-  document.getElementById('clearDataBtn').style.display = 'inline-block';
+  switchView('home');
 
-  // Activate home view
-  document.getElementById('viewHome').style.display = 'block';
-  document.querySelector('[data-view="home"]').classList.add('active');
+  const rated  = WATCHED.filter(f => f.rating >= 1);
+  const avg    = rated.length ? rated.reduce((s, f) => s + f.rating, 0) / rated.length : 0;
+  const fives  = rated.filter(f => f.rating === 5);
 
-  // Hero stats
-  const rated = DIARY.filter(f => f.rating >= 1);
-  const avg   = rated.length ? rated.reduce((s, f) => s + f.rating, 0) / rated.length : 0;
-  const fives = rated.filter(f => f.rating === 5);
+  setText('heroTotal',   DIARY.length);
+  setText('heroWatched', WATCHED.length);
+  setText('heroRated',   rated.length);
+  setText('heroAvg',     avg.toFixed(2));
+  setText('heroFives',   fives.length);
 
-  document.getElementById('heroTotal').textContent = DIARY.length;
-  document.getElementById('heroRated').textContent = rated.length;
-  document.getElementById('heroAvg').textContent   = avg.toFixed(2);
-  document.getElementById('heroFives').textContent  = fives.length;
+  const years = DIARY.map(f => f.watchedDate.slice(0, 4)).filter(Boolean).sort();
+  const first = years[0], last = years[years.length - 1];
+  const range = first === last ? first : `${first}–${last}`;
+  const backlog = DIARY.length - WATCHED.length;
+  setText('heroDesc',
+    `${DIARY.length} films collected across ${range}, ${backlog} still waiting to be watched. ` +
+    `Logged on Letterboxd, enriched with TMDB.`);
 
-  // Date range for desc
-  const dates = DIARY.map(f => f.watchedDate).filter(Boolean).sort();
-  const fromYear = dates[dates.length - 1]?.slice(0, 4);
-  const toYear   = dates[0]?.slice(0, 4);
-  const yearRange = fromYear === toYear ? fromYear : `${fromYear}–${toYear}`;
-  document.getElementById('heroDesc').textContent =
-    `${DIARY.length} films purchased across ${yearRange}. Logged on Letterboxd, enriched with TMDB.`;
+  renderHome();
+  renderStats();
 
+  // Defined in web.js
+  if (typeof initWebExplorer === 'function') initWebExplorer();
+  if (typeof initGame        === 'function') initGame();
+}
+
+function renderHome() {
   renderMosaic();
   renderRecent();
   renderFiveStars();
-  renderStats();
-
-  // Init web explorer and game (defined in web.js)
-  if (typeof initWebExplorer === 'function') initWebExplorer();
-  if (typeof initGame        === 'function') initGame();
 }
 
 /* =============================================
@@ -230,15 +237,15 @@ function handleTokenSave() {
   const val = document.getElementById('tokenInput').value.trim();
   if (!val || val.startsWith('•')) return;
   BEARER = val;
-  localStorage.setItem('tmdb_token', BEARER);
+  localStorage.setItem(LS.token, BEARER);
   markTokenConnected();
-  TMDB_CACHE = {};
-  localStorage.removeItem('tmdb_cache');
+
+  // Forget lookups that failed without a token so they are retried
+  for (const k in TMDB_CACHE) if (TMDB_CACHE[k] === null) delete TMDB_CACHE[k];
+
   if (DIARY.length) {
-    renderMosaic();
-    renderRecent();
-    renderFiveStars();
-    if (document.getElementById('viewWall').style.display !== 'none') renderWall();
+    renderHome();
+    if (isVisible('viewWall')) filterWall();
   }
 }
 
@@ -254,323 +261,331 @@ function markTokenConnected() {
 /* =============================================
    VIEWS
    ============================================= */
+const VIEWS = ['home', 'wall', 'stats', 'web', 'game'];
+
 function switchView(view) {
-  ['home','wall','stats','web','game'].forEach(v => {
-    const el = document.getElementById('view' + v.charAt(0).toUpperCase() + v.slice(1));
+  VIEWS.forEach(v => {
+    const el = document.getElementById(viewId(v));
     if (el) el.style.display = v === view ? 'block' : 'none';
   });
   document.querySelectorAll('.nav-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.view === view);
   });
   window.scrollTo(0, 0);
-  if (view === 'wall') renderWall();
+  if (view === 'wall')  filterWall();
+  if (view === 'stats') renderGenres();
 }
+
+const viewId    = v  => 'view' + v.charAt(0).toUpperCase() + v.slice(1);
+const isVisible = id => document.getElementById(id).style.display !== 'none';
 
 /* =============================================
    TMDB FETCH
    ============================================= */
+async function tmdbGet(path) {
+  const r = await fetch(`${TMDB_API}${path}`, { headers: { Authorization: `Bearer ${BEARER}` } });
+  if (!r.ok) throw new Error(`TMDB ${r.status}`);
+  return r.json();
+}
+
+// Runs fn once per key at a time; concurrent callers share the same promise
+function once(key, fn) {
+  if (INFLIGHT.has(key)) return INFLIGHT.get(key);
+  const p = fn().finally(() => INFLIGHT.delete(key));
+  INFLIGHT.set(key, p);
+  return p;
+}
+
 async function fetchTMDB(film) {
-  const key = `${film.name}|${film.year}`;
+  const key = filmKey(film);
   if (key in TMDB_CACHE) return TMDB_CACHE[key];
   if (!BEARER) return null;
 
-  try {
-    const q  = encodeURIComponent(film.name);
-    const yr = film.year ? `&year=${film.year}` : '';
-    const r  = await fetch(
-      `https://api.themoviedb.org/3/search/movie?query=${q}${yr}&page=1`,
-      { headers: { Authorization: `Bearer ${BEARER}` } }
-    );
-    const data  = await r.json();
-    const match = (data.results || [])[0];
-    if (!match) { TMDB_CACHE[key] = null; return null; }
+  return once('movie:' + key, async () => {
+    try {
+      const q    = encodeURIComponent(film.name);
+      const yr   = film.year ? `&year=${film.year}` : '';
+      const data = await tmdbGet(`/search/movie?query=${q}${yr}&page=1`);
+      const match = (data.results || [])[0];
+      if (!match) return cacheSet(TMDB_CACHE, LS.tmdb, key, null);
 
-    const det  = await fetch(`https://api.themoviedb.org/3/movie/${match.id}`,
-      { headers: { Authorization: `Bearer ${BEARER}` } });
-    const full = await det.json();
+      const full = await tmdbGet(`/movie/${match.id}`);
+      return cacheSet(TMDB_CACHE, LS.tmdb, key, {
+        id:         full.id,
+        poster:     full.poster_path,
+        backdrop:   full.backdrop_path,
+        overview:   full.overview,
+        tmdbRating: full.vote_average ? parseFloat(full.vote_average.toFixed(1)) : null,
+        genres:     (full.genres || []).map(g => g.name),
+        runtime:    full.runtime,
+      });
+    } catch (e) { return null; }
+  });
+}
 
-    const result = {
-      id:         full.id,
-      poster:     full.poster_path,
-      backdrop:   full.backdrop_path,
-      overview:   full.overview,
-      tmdbRating: full.vote_average ? parseFloat(full.vote_average.toFixed(1)) : null,
-      genres:     (full.genres || []).map(g => g.name),
-      runtime:    full.runtime,
-    };
-    TMDB_CACHE[key] = result;
-    if (Object.keys(TMDB_CACHE).length % 20 === 0) {
-      try { localStorage.setItem('tmdb_cache', JSON.stringify(TMDB_CACHE)); } catch(e) {}
-    }
-    return result;
-  } catch(e) { return null; }
+async function fetchCredits(film) {
+  const key = filmKey(film);
+  if (key in CREDITS_CACHE) return CREDITS_CACHE[key];
+  if (!BEARER) return null;
+
+  return once('credits:' + key, async () => {
+    try {
+      const tmdb = await fetchTMDB(film);
+      if (!tmdb?.id) return null;
+      const data = await tmdbGet(`/movie/${tmdb.id}/credits`);
+      const crew = data.crew || [];
+      return cacheSet(CREDITS_CACHE, LS.credits, key, {
+        cast:     (data.cast || []).slice(0, 10).map(p => p.name),
+        director: crew.filter(p => p.job === 'Director').map(p => p.name),
+        writer:   crew.filter(p => ['Writer', 'Screenplay', 'Story'].includes(p.job)).slice(0, 3).map(p => p.name),
+      });
+    } catch (e) { return null; }
+  });
 }
 
 /* =============================================
-   POSTER MOSAIC
+   PERSISTENT CACHES
    ============================================= */
-async function renderMosaic() {
+const pendingSaves = new Map();
+
+function cacheSet(cache, storageKey, key, value) {
+  cache[key] = value;
+  // Debounce writes so a burst of lookups costs one localStorage write
+  clearTimeout(pendingSaves.get(storageKey));
+  pendingSaves.set(storageKey, setTimeout(() => {
+    try { localStorage.setItem(storageKey, JSON.stringify(cache)); } catch (e) { /* quota */ }
+  }, 1000));
+  return value;
+}
+
+function loadJson(storageKey) {
+  try { return JSON.parse(localStorage.getItem(storageKey) || '{}') || {}; }
+  catch (e) { return {}; }
+}
+
+/* =============================================
+   POSTER HYDRATION
+   Elements with data-poster="<film id>" get their poster filled in once TMDB answers.
+   Each call bumps a generation per container so stale loops stop when it re-renders.
+   ============================================= */
+const hydrateGen = new WeakMap();
+
+async function hydratePosters(container, limit = Infinity) {
+  const gen = (hydrateGen.get(container) || 0) + 1;
+  hydrateGen.set(container, gen);
+
+  const els = Array.from(container.querySelectorAll('[data-poster]')).slice(0, limit);
+  await mapLimit(els, 6, async el => {
+    if (hydrateGen.get(container) !== gen || !el.isConnected) return;
+    const film = FILM_BY_ID.get(el.dataset.poster);
+    const tmdb = film && await fetchTMDB(film);
+    if (hydrateGen.get(container) === gen) applyPoster(el, tmdb?.poster);
+  });
+}
+
+function applyPoster(el, poster) {
+  const film = FILM_BY_ID.get(el.dataset.poster);
+  delete el.dataset.poster;
+  if (el.tagName === 'IMG') {
+    if (poster) el.src = `${IMG}${el.dataset.size || 'w92'}${poster}`;
+    else el.style.display = 'none';
+    return;
+  }
+  if (!poster) return;
+  el.querySelector('.ph')?.remove();
+  el.classList.remove('blank', 'no-poster');
+  el.insertAdjacentHTML('afterbegin', posterImg(poster, film?.name || '', el.dataset.size));
+}
+
+function posterImg(poster, alt, size = 'w200') {
+  return `<img src="${IMG}${size}${poster}" alt="${escapeHtml(alt)}" loading="lazy" />`;
+}
+
+function cachedPoster(film) {
+  return TMDB_CACHE[filmKey(film)]?.poster || null;
+}
+
+/* =============================================
+   HOME
+   ============================================= */
+function renderMosaic() {
   const mosaic = document.getElementById('posterMosaic');
-  const fives  = DIARY.filter(f => f.rating === 5);
-  const others = DIARY.filter(f => f.rating >= 3.5 && f.rating < 5);
-  const pool   = [...fives, ...others].slice(0, 25);
+  const pool   = [
+    ...WATCHED.filter(f => f.rating === 5),
+    ...WATCHED.filter(f => f.rating >= 3.5 && f.rating < 5),
+  ].slice(0, 25);
 
-  mosaic.innerHTML = pool.map((f, i) => `
-    <div class="mosaic-poster ${f.rating === 5 ? 'five-star' : ''}"
-         id="mosaic-${i}"
-         onclick='openModal(${safeJson(f)})'>
-      <div class="no-img">${escapeHtml(f.name.slice(0, 20))}</div>
-    </div>
-  `).join('');
-
-  for (let i = 0; i < pool.length; i++) {
-    const tmdb = await fetchTMDB(pool[i]);
-    const el   = document.getElementById(`mosaic-${i}`);
-    if (el && tmdb?.poster) {
-      el.innerHTML = `<img src="${IMG}w200${tmdb.poster}" alt="${escapeHtml(pool[i].name)}" loading="lazy" />`;
-    }
-  }
+  mosaic.innerHTML = pool.map(f => {
+    const poster = cachedPoster(f);
+    return `
+      <div class="mosaic-poster ${f.rating === 5 ? 'five-star' : ''}" data-film="${f.id}"
+           ${poster ? '' : `data-poster="${f.id}"`}>
+        ${poster ? posterImg(poster, f.name) : `<div class="no-img ph">${escapeHtml(f.name.slice(0, 20))}</div>`}
+      </div>`;
+  }).join('');
+  hydratePosters(mosaic);
 }
 
-/* =============================================
-   RECENT WATCHES
-   ============================================= */
-async function renderRecent() {
-  const grid   = document.getElementById('recentGrid');
-  const recent = DIARY.slice(0, 18);
-
-  grid.innerHTML = recent.map((f, i) => `
-    <div class="film-card" onclick='openModal(${safeJson(f)})'>
-      <div class="film-card-poster blank" id="rcp-${i}">${escapeHtml(f.name.slice(0, 30))}</div>
-      <div class="film-card-info">
-        <div class="film-card-title">${escapeHtml(f.name)}</div>
-        <div class="film-card-meta">${f.year || '—'}</div>
-        <div class="film-card-stars">${starsStr(f.rating)}</div>
-      </div>
-    </div>
-  `).join('');
-
-  for (let i = 0; i < recent.length; i++) {
-    const tmdb = await fetchTMDB(recent[i]);
-    const el   = document.getElementById(`rcp-${i}`);
-    if (el && tmdb?.poster) {
-      el.className = 'film-card-poster';
-      el.innerHTML = `<img src="${IMG}w200${tmdb.poster}" alt="${escapeHtml(recent[i].name)}" loading="lazy" />`;
-    }
-  }
+function renderRecent() {
+  const grid = document.getElementById('recentGrid');
+  grid.innerHTML = DIARY.slice(0, 18).map(f => {
+    const poster = cachedPoster(f);
+    return `
+      <div class="film-card" data-film="${f.id}">
+        <div class="film-card-poster ${poster ? '' : 'blank'}" ${poster ? '' : `data-poster="${f.id}"`}>
+          ${poster ? posterImg(poster, f.name) : `<span class="ph">${escapeHtml(f.name.slice(0, 30))}</span>`}
+        </div>
+        <div class="film-card-info">
+          <div class="film-card-title">${escapeHtml(f.name)}</div>
+          <div class="film-card-meta">${f.year || '—'}</div>
+          <div class="film-card-stars">${starsStr(f.rating)}</div>
+        </div>
+      </div>`;
+  }).join('');
+  hydratePosters(grid);
 }
 
-/* =============================================
-   FIVE STAR LIST
-   ============================================= */
-async function renderFiveStars() {
+function renderFiveStars() {
   const list  = document.getElementById('fiveStarList');
-  const fives = DIARY.filter(f => f.rating === 5);
+  const fives = WATCHED.filter(f => f.rating === 5);
 
-  list.innerHTML = fives.map((f, i) => `
-    <div class="five-star-row" onclick='openModal(${safeJson(f)})'>
-      <span class="fsr-num">${String(i + 1).padStart(2, '0')}</span>
-      <img class="fsr-thumb" id="fst-${i}" src="" alt="${escapeHtml(f.name)}" />
-      <span class="fsr-title">${escapeHtml(f.name)}</span>
-      <span class="fsr-year">${f.year || '—'}</span>
-      <span class="fsr-stars">★★★★★</span>
-    </div>
-  `).join('');
-
-  for (let i = 0; i < fives.length; i++) {
-    const tmdb = await fetchTMDB(fives[i]);
-    const el   = document.getElementById(`fst-${i}`);
-    if (el && tmdb?.poster) el.src = `${IMG}w92${tmdb.poster}`;
-    else if (el) el.style.display = 'none';
-  }
+  list.innerHTML = fives.map((f, i) => {
+    const poster = cachedPoster(f);
+    return `
+      <div class="five-star-row" data-film="${f.id}">
+        <span class="fsr-num">${String(i + 1).padStart(2, '0')}</span>
+        <img class="fsr-thumb" alt="${escapeHtml(f.name)}" data-size="w92"
+             ${poster ? `src="${IMG}w92${poster}"` : `data-poster="${f.id}"`} />
+        <span class="fsr-title">${escapeHtml(f.name)}</span>
+        <span class="fsr-year">${f.year || '—'}</span>
+        <span class="fsr-stars">★★★★★</span>
+      </div>`;
+  }).join('');
+  hydratePosters(list);
 }
 
 /* =============================================
    POSTER WALL
    ============================================= */
-function renderWall() {
-  wallFiltered = [...DIARY];
-  drawWall();
-  enrichWall();
-}
+const WALL_FILTERS = {
+  all:       () => true,
+  watched:   f => isWatched(f),
+  5:         f => f.rating === 5,
+  4:         f => f.rating >= 4,
+  3:         f => f.rating >= 3,
+  unrated:   f => f.rating === 0.5,
+  unwatched: f => !isWatched(f),
+};
+
+// Unwatched films (null rating) always sort to the end
+const byRating = dir => (a, b) =>
+  (a.rating === null) - (b.rating === null) || dir * ((a.rating || 0) - (b.rating || 0));
+
+const WALL_SORTS = {
+  'date-desc':   (a, b) => b.watchedDate.localeCompare(a.watchedDate) || b.row - a.row,
+  'date-asc':    (a, b) => a.watchedDate.localeCompare(b.watchedDate) || a.row - b.row,
+  'rating-desc': byRating(-1),
+  'rating-asc':  byRating(1),
+  'year-desc':   (a, b) => (b.year || 0) - (a.year || 0),
+  'year-asc':    (a, b) => (a.year || 0) - (b.year || 0),
+  'title-asc':   (a, b) => sortTitle(a.name).localeCompare(sortTitle(b.name)),
+};
 
 function filterWall() {
-  const q       = document.getElementById('wallSearch').value.toLowerCase();
-  const sort    = document.getElementById('wallSort').value;
-  const ratingF = document.getElementById('wallRatingFilter').value;
+  const q      = document.getElementById('wallSearch').value.toLowerCase().trim();
+  const sort   = WALL_SORTS[document.getElementById('wallSort').value] || WALL_SORTS['date-desc'];
+  const filter = WALL_FILTERS[document.getElementById('wallRatingFilter').value] || WALL_FILTERS.all;
 
-  wallFiltered = DIARY.filter(f => {
-    if (q && !f.name.toLowerCase().includes(q)) return false;
-    if (ratingF === '5'       && f.rating !== 5)  return false;
-    if (ratingF === '4'       && f.rating < 4)    return false;
-    if (ratingF === '3'       && f.rating < 3)    return false;
-    if (ratingF === 'unrated' && f.rating !== 0.5) return false;
-    return true;
-  });
+  const films = DIARY
+    .filter(f => filter(f) && (!q || f.name.toLowerCase().includes(q)))
+    .sort(sort);
 
-  wallFiltered.sort((a, b) => {
-    if (sort === 'date-desc')   return b.watchedDate.localeCompare(a.watchedDate);
-    if (sort === 'date-asc')    return a.watchedDate.localeCompare(b.watchedDate);
-    if (sort === 'rating-desc') return b.rating - a.rating;
-    if (sort === 'rating-asc')  return a.rating - b.rating;
-    if (sort === 'year-desc')   return (b.year || 0) - (a.year || 0);
-    if (sort === 'year-asc')    return (a.year || 0) - (b.year || 0);
-    return 0;
-  });
-
-  drawWall();
-  enrichWall();
-}
-
-function drawWall() {
-  document.getElementById('wallCount').textContent = `${wallFiltered.length} films`;
+  setText('wallCount', `${films.length} film${films.length === 1 ? '' : 's'}`);
   const grid = document.getElementById('wallGrid');
-
-  grid.innerHTML = wallFiltered.map((f, i) => {
-    const cacheKey = `${f.name}|${f.year}`;
-    const cached   = TMDB_CACHE[cacheKey];
-    const posterSrc = cached?.poster ? `${IMG}w200${cached.poster}` : null;
-    const rStr = f.rating >= 1 ? f.rating.toString() : '0.5';
-
+  grid.innerHTML = films.map(f => {
+    const poster = cachedPoster(f);
     return `
-      <div class="wall-card ${posterSrc ? '' : 'no-poster'}"
-           data-rating="${rStr}"
-           data-idx="${i}"
-           onclick='openModal(${safeJson(f)})'>
-        ${posterSrc
-          ? `<img src="${posterSrc}" alt="${escapeHtml(f.name)}" loading="lazy" />`
-          : escapeHtml(f.name.slice(0, 30))}
+      <div class="wall-card ${poster ? '' : 'no-poster'}" data-film="${f.id}"
+           data-rating="${f.rating ?? 'none'}" ${poster ? '' : `data-poster="${f.id}"`}>
+        ${poster ? posterImg(poster, f.name) : `<span class="ph">${escapeHtml(f.name.slice(0, 30))}</span>`}
         <div class="wall-card-overlay">
           <div class="wall-card-overlay-title">${escapeHtml(f.name)}</div>
           <div class="wall-card-overlay-stars">${starsStr(f.rating)}</div>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
-}
-
-async function enrichWall() {
-  const cards    = document.querySelectorAll('.wall-card.no-poster');
-  const toEnrich = Array.from(cards).slice(0, 80);
-  for (const card of toEnrich) {
-    const idx  = parseInt(card.dataset.idx);
-    const film = wallFiltered[idx];
-    if (!film) continue;
-    const tmdb = await fetchTMDB(film);
-    if (tmdb?.poster && card.isConnected) {
-      card.classList.remove('no-poster');
-      card.innerHTML = `
-        <img src="${IMG}w200${tmdb.poster}" alt="${escapeHtml(film.name)}" loading="lazy" />
-        <div class="wall-card-overlay">
-          <div class="wall-card-overlay-title">${escapeHtml(film.name)}</div>
-          <div class="wall-card-overlay-stars">${starsStr(film.rating)}</div>
-        </div>
-      `;
-    }
-  }
+  hydratePosters(grid, 80);
 }
 
 /* =============================================
    STATS
    ============================================= */
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 function renderStats() {
-  renderTimeline();
-  renderRatingDist();
-  renderDecades();
-  renderMonths();
+  const byMonth = countBy(DIARY, f => f.watchedDate.slice(0, 7));
+  barChart('chartTimeline', Object.keys(byMonth).sort().map(m => [m, byMonth[m]]));
+
+  const ratings = countBy(WATCHED.filter(f => f.rating >= 1), f => f.rating);
+  barChart('chartRatings',
+    [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(r => [starsStr(r), ratings[r] || 0, r >= 4 ? '' : 'accent']),
+    { short: true, rawLabels: true });
+
+  const byDecade = countBy(DIARY.filter(f => f.year), f => Math.floor(f.year / 10) * 10);
+  barChart('chartDecades', Object.keys(byDecade).sort().map(d => [`${d}s`, byDecade[d]]));
+
+  const byCalMonth = countBy(DIARY, f => parseInt(f.watchedDate.slice(5, 7), 10) - 1);
+  barChart('chartMonths', MONTH_NAMES.map((m, i) => [m, byCalMonth[i] || 0]), { short: true });
+
+  renderGenres();
 }
 
-function renderTimeline() {
-  const byMonth = {};
-  DIARY.forEach(f => {
-    const ym = f.watchedDate.slice(0, 7);
-    if (ym) byMonth[ym] = (byMonth[ym] || 0) + 1;
-  });
-  const months = Object.keys(byMonth).sort();
-  const max    = Math.max(...Object.values(byMonth));
-
-  document.getElementById('chartTimeline').innerHTML = `
-    <div class="bar-chart">
-      ${months.map(m => `
-        <div class="bar-row">
-          <div class="bar-label">${m}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${(byMonth[m]/max*100).toFixed(1)}%"></div></div>
-          <div class="bar-val">${byMonth[m]}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-function renderRatingDist() {
-  const rated  = DIARY.filter(f => f.rating >= 1);
+// Genres come from whatever TMDB data is cached so far
+function renderGenres() {
+  const withData = DIARY.filter(f => TMDB_CACHE[filmKey(f)]?.genres?.length);
+  const note = document.getElementById('genreNote');
+  if (!withData.length) {
+    note.textContent = BEARER ? 'Genre data appears as posters load from TMDB' : 'Connect TMDB to see genre data';
+    document.getElementById('chartGenres').innerHTML = '';
+    return;
+  }
+  note.textContent = `Based on ${withData.length} of ${DIARY.length} films with TMDB data`;
   const counts = {};
-  [1,1.5,2,2.5,3,3.5,4,4.5,5].forEach(r => counts[r] = 0);
-  rated.forEach(f => { counts[f.rating] = (counts[f.rating] || 0) + 1; });
-  const max = Math.max(...Object.values(counts));
-
-  document.getElementById('chartRatings').innerHTML = `
-    <div class="bar-chart">
-      ${Object.entries(counts).map(([r, c]) => `
-        <div class="bar-row">
-          <div class="bar-label short">${starsStr(parseFloat(r))}</div>
-          <div class="bar-track"><div class="bar-fill ${parseFloat(r) >= 4 ? '' : 'accent'}" style="width:${max ? (c/max*100).toFixed(1) : 0}%"></div></div>
-          <div class="bar-val">${c}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  withData.forEach(f => TMDB_CACHE[filmKey(f)].genres.forEach(g => counts[g] = (counts[g] || 0) + 1));
+  barChart('chartGenres', Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15));
 }
 
-function renderDecades() {
-  const byDecade = {};
-  DIARY.forEach(f => {
-    if (!f.year) return;
-    const dec = Math.floor(f.year / 10) * 10;
-    byDecade[dec] = (byDecade[dec] || 0) + 1;
-  });
-  const decades = Object.keys(byDecade).sort();
-  const max     = Math.max(...Object.values(byDecade));
-
-  document.getElementById('chartDecades').innerHTML = `
+// rows: [label, count, extraFillClass?]
+function barChart(containerId, rows, { short = false, rawLabels = false } = {}) {
+  const max = Math.max(0, ...rows.map(r => r[1]));
+  document.getElementById(containerId).innerHTML = `
     <div class="bar-chart">
-      ${decades.map(d => `
+      ${rows.map(([label, count, cls = '']) => `
         <div class="bar-row">
-          <div class="bar-label">${d}s</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${(byDecade[d]/max*100).toFixed(1)}%"></div></div>
-          <div class="bar-val">${byDecade[d]}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+          <div class="bar-label ${short ? 'short' : ''}">${rawLabels ? label : escapeHtml(label)}</div>
+          <div class="bar-track"><div class="bar-fill ${cls}" style="width:${max ? (count / max * 100).toFixed(1) : 0}%"></div></div>
+          <div class="bar-val">${count}</div>
+        </div>`).join('')}
+    </div>`;
 }
 
-function renderMonths() {
-  const names   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const byMonth = new Array(12).fill(0);
-  DIARY.forEach(f => {
-    const m = parseInt(f.watchedDate.slice(5, 7)) - 1;
-    if (!isNaN(m)) byMonth[m]++;
+function countBy(items, keyFn) {
+  const out = {};
+  items.forEach(item => {
+    const k = keyFn(item);
+    if (k === '' || k === null || Number.isNaN(k)) return;
+    out[k] = (out[k] || 0) + 1;
   });
-  const max = Math.max(...byMonth);
-
-  document.getElementById('chartMonths').innerHTML = `
-    <div class="bar-chart">
-      ${byMonth.map((c, i) => `
-        <div class="bar-row">
-          <div class="bar-label short">${names[i]}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${max ? (c/max*100).toFixed(1) : 0}%"></div></div>
-          <div class="bar-val">${c}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  return out;
 }
 
 /* =============================================
    MODAL
    ============================================= */
+let modalToken = 0;
+
 async function openModal(film) {
+  const token   = ++modalToken;
   const overlay = document.getElementById('modalOverlay');
   const inner   = document.getElementById('modalInner');
   overlay.classList.add('open');
@@ -588,25 +603,25 @@ async function openModal(film) {
         <div class="modal-rating-row"><span class="modal-stars">${starsStr(film.rating)}</span></div>
         <div class="modal-overview" style="color:var(--muted)">Loading details…</div>
       </div>
-    </div>
-  `;
+    </div>`;
 
   const [tmdb, credits] = await Promise.all([fetchTMDB(film), fetchCredits(film)]);
+  if (token !== modalToken) return;   // another film was opened meanwhile
 
-  const myStars = film.rating >= 1 ? film.rating * 2 : null;
+  const myScore = film.rating >= 1 ? film.rating * 2 : null;
   let diffBadge = '';
-  if (myStars && tmdb?.tmdbRating) {
-    const d = myStars - tmdb.tmdbRating;
+  if (myScore && tmdb?.tmdbRating) {
+    const d = myScore - tmdb.tmdbRating;
     if (d > 1)       diffBadge = `<span class="diff-badge diff-pos">+${d.toFixed(1)} vs crowd</span>`;
     else if (d < -1) diffBadge = `<span class="diff-badge diff-neg">${d.toFixed(1)} vs crowd</span>`;
-    else             diffBadge = `<span class="diff-badge diff-neu">inline with crowd</span>`;
+    else             diffBadge = `<span class="diff-badge diff-neu">in line with crowd</span>`;
   }
 
   const backdropSrc = tmdb?.backdrop ? `${IMG}w780${tmdb.backdrop}` : null;
   const posterSrc   = tmdb?.poster   ? `${IMG}w200${tmdb.poster}`   : null;
-
   const directorStr = credits?.director?.length ? credits.director.join(', ') : null;
   const castStr     = credits?.cast?.length     ? credits.cast.slice(0, 5).join(', ') : null;
+  const dateLabel   = isWatched(film) ? 'Logged' : 'Added';
 
   inner.innerHTML = `
     ${backdropSrc
@@ -627,26 +642,30 @@ async function openModal(film) {
         ${tmdb?.genres?.length ? `<div class="modal-genres">${tmdb.genres.map(g => `<span class="genre-pill">${escapeHtml(g)}</span>`).join('')}</div>` : ''}
         ${directorStr ? `<div class="modal-credit"><span class="modal-credit-label">Director</span> ${escapeHtml(directorStr)}</div>` : ''}
         ${castStr     ? `<div class="modal-credit"><span class="modal-credit-label">Cast</span> ${escapeHtml(castStr)}</div>` : ''}
+        ${film.watchedDate ? `<div class="modal-credit"><span class="modal-credit-label">${dateLabel}</span> ${escapeHtml(film.watchedDate)}</div>` : ''}
         <div class="modal-overview">${escapeHtml(tmdb?.overview || 'No overview available.')}</div>
         <div class="modal-links">
           ${film.letterboxd ? `<a href="${escapeHtml(film.letterboxd)}" target="_blank" rel="noopener">View on Letterboxd →</a>` : ''}
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 }
 
 function closeModal() {
+  modalToken++;
   document.getElementById('modalOverlay').classList.remove('open');
   document.body.style.overflow = '';
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
 /* =============================================
    HELPERS
    ============================================= */
+const filmKey   = film => `${film.name}|${film.year}`;
+const isWatched = film => film.rating !== null && film.rating !== undefined;
+const sortTitle = name => name.replace(/^(the|a|an)\s+/i, '');
+
 function starsStr(rating) {
+  if (rating === null || rating === undefined) return '<span style="color:var(--muted)">not seen</span>';
   if (rating === 0.5) return '<span style="color:var(--muted)">–</span>';
   const full = Math.floor(rating);
   const half = rating % 1 !== 0;
@@ -658,9 +677,25 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-function safeJson(obj) {
-  return JSON.stringify(obj).replace(/'/g, '&#39;');
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+// Like Promise.all(items.map(fn)) but with at most `limit` calls in flight
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }

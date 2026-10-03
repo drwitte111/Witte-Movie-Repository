@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>drwitte / films</title>
+  <meta name="description" content="drwitte's film collection — Letterboxd diary enriched with TMDB." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
@@ -48,6 +49,7 @@
         <p class="hero-eyebrow">The archive</p>
         <h1 class="hero-title"><span id="heroTotal">—</span><br/><span class="hero-sub">films in the collection</span></h1>
         <div class="hero-stats-row">
+          <div class="hero-stat"><span class="hs-val" id="heroWatched">—</span><span class="hs-label">watched</span></div>
           <div class="hero-stat"><span class="hs-val" id="heroRated">—</span><span class="hs-label">rated</span></div>
           <div class="hero-stat"><span class="hs-val" id="heroAvg">—</span><span class="hs-label">avg rating</span></div>
           <div class="hero-stat"><span class="hs-val" id="heroFives">—</span><span class="hs-label">five stars</span></div>
@@ -75,7 +77,7 @@
   <!-- POSTER WALL VIEW -->
   <main id="viewWall" class="view" style="display:none;">
     <div class="wall-controls">
-      <input type="text" id="wallSearch" placeholder="Search films…" oninput="filterWall()" />
+      <input type="search" id="wallSearch" placeholder="Search films…" oninput="filterWall()" />
       <select id="wallSort" onchange="filterWall()">
         <option value="date-desc">Recently added</option>
         <option value="date-asc">Oldest first</option>
@@ -83,9 +85,12 @@
         <option value="rating-asc">Lowest rated</option>
         <option value="year-desc">Newest films</option>
         <option value="year-asc">Oldest films</option>
+        <option value="title-asc">Title A–Z</option>
       </select>
       <select id="wallRatingFilter" onchange="filterWall()">
-        <option value="all">All ratings</option>
+        <option value="all">Entire collection</option>
+        <option value="watched">Watched</option>
+        <option value="unwatched">Not yet watched</option>
         <option value="5">★★★★★ only</option>
         <option value="4">★★★★+</option>
         <option value="3">★★★+</option>

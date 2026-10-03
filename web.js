@@ -1,236 +1,200 @@
 /* =============================================
    WEB EXPLORER + GAME ENGINE
-   Requires: app.js loaded first (DIARY, BEARER, TMDB_CACHE, fetchTMDB, IMG, escapeHtml, safeJson, starsStr)
+   Requires: app.js loaded first (DIARY, WATCHED, TMDB_CACHE, CREDITS_CACHE, fetchTMDB,
+   fetchCredits, filmKey, mapLimit, IMG, escapeHtml)
    ============================================= */
+
+const SVG_NS     = 'http://www.w3.org/2000/svg';
+const MAX_NODES  = 12;
+const MAX_FETCH  = 30;   // uncached films looked up per web build
+const COLORS = {
+  gold:   '#c8971a',
+  line:   '#2a2a32',
+  ring:   '#3a3a46',
+  node:   '#1a1a1e',
+  center: '#111113',
+  muted:  '#6b6b7a',
+  label:  '#8a8494',
+  text:   '#d4cfc4',
+  cream:  '#e8e0cc',
+};
 
 /* =============================================
    BUILD CONNECTIONS FOR A FILM
-   Returns array of { film, connections: [{type, value}] }
+   Returns array of { film, shared: [attr], weight }
    ============================================= */
 async function buildWebData(centerFilm, connectionType) {
-  const centerTmdb    = await fetchTMDB(centerFilm);
-  const centerCredits = await fetchCredits(centerFilm);
+  const needsCredits = connectionType !== 'genre';
+  const [centerTmdb, centerCredits] = await Promise.all([
+    fetchTMDB(centerFilm),
+    needsCredits ? fetchCredits(centerFilm) : null,
+  ]);
+  const centerAttrs = new Set(getAttrs(centerTmdb, centerCredits, connectionType));
+  if (!centerAttrs.size) return [];
 
-  // Get shared attributes for center film
-  const centerAttrs = getAttrs(centerTmdb, centerCredits, connectionType);
+  // Use what's cached first, then look up a limited batch of new films
+  const cache   = needsCredits ? CREDITS_CACHE : TMDB_CACHE;
+  const pool    = DIARY.filter(f => filmKey(f) !== filmKey(centerFilm));
+  const cached  = pool.filter(f => cache[filmKey(f)]);
+  const toFetch = pool.filter(f => !(filmKey(f) in cache)).slice(0, MAX_FETCH);
 
-  // Score every other film by shared attributes
-  const scored = [];
-  const pool = DIARY.filter(f => f.name !== centerFilm.name);
+  const scored = await mapLimit([...cached, ...toFetch], 6, async film => {
+    const [tmdb, credits] = await Promise.all([
+      fetchTMDB(film),
+      needsCredits ? fetchCredits(film) : null,
+    ]);
+    const shared = getAttrs(tmdb, credits, connectionType).filter(a => centerAttrs.has(a));
+    return shared.length ? { film, shared, weight: shared.length } : null;
+  });
 
-  // Limit to avoid too many API calls — use cached first, then fetch a batch
-  const cached  = pool.filter(f => TMDB_CACHE[`${f.name}|${f.year}`]);
-  const toFetch = pool.filter(f => !TMDB_CACHE[`${f.name}|${f.year}`]).slice(0, 30);
-
-  const candidates = [...cached, ...toFetch];
-
-  for (const film of candidates) {
-    const tmdb    = await fetchTMDB(film);
-    const credits = connectionType !== 'genre' ? await fetchCredits(film) : null;
-    const attrs   = getAttrs(tmdb, credits, connectionType);
-    const shared  = centerAttrs.filter(a => attrs.includes(a));
-    if (shared.length) {
-      scored.push({ film, shared, weight: shared.length });
-    }
-  }
-
-  // Sort by most connections, take top 12
-  scored.sort((a, b) => b.weight - a.weight);
-  return scored.slice(0, 12);
+  return scored
+    .filter(Boolean)
+    .sort((a, b) => b.weight - a.weight || (b.film.rating || 0) - (a.film.rating || 0))
+    .slice(0, MAX_NODES);
 }
 
 function getAttrs(tmdb, credits, type) {
   if (!tmdb) return [];
-  switch(type) {
+  switch (type) {
     case 'genre':    return tmdb.genres || [];
     case 'actor':    return credits?.cast || [];
     case 'director': return credits?.director || [];
     case 'writer':   return credits?.writer || [];
-    default:         return [...(tmdb.genres||[]), ...(credits?.cast||[]).slice(0,5)];
+    default:         return [...(tmdb.genres || []), ...(credits?.cast || []).slice(0, 5)];
   }
 }
 
 /* =============================================
    SVG WEB RENDERER
    ============================================= */
-function renderWeb(centerFilm, nodes, svg, onNodeClick, highlightName = null) {
+function svgEl(tag, attrs = {}, text) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function svgMessage(svg, text) {
   svg.innerHTML = '';
-  const W = svg.clientWidth  || 900;
-  const H = svg.clientHeight || 600;
+  svg.appendChild(svgEl('text', {
+    x: '50%', y: '50%', 'text-anchor': 'middle', fill: COLORS.muted,
+    'font-family': 'DM Mono,monospace', 'font-size': 13,
+  }, text));
+}
+
+// Circular poster (or title fallback) clipped to radius r at (x, y)
+function svgPoster(defs, clipId, film, x, y, r, fallbackLen, fallbackSize, fallbackColor) {
+  const poster = TMDB_CACHE[filmKey(film)]?.poster;
+  if (!poster) {
+    return svgEl('text', {
+      x, y: y + 4, 'text-anchor': 'middle', 'font-size': fallbackSize,
+      fill: fallbackColor, 'font-family': 'Inter, sans-serif',
+    }, film.name.slice(0, fallbackLen));
+  }
+  const clip = svgEl('clipPath', { id: clipId });
+  clip.appendChild(svgEl('circle', { cx: x, cy: y, r }));
+  defs.appendChild(clip);
+  return svgEl('image', {
+    href: `${IMG}w92${poster}`, x: x - r, y: y - r, width: r * 2, height: r * 2,
+    'clip-path': `url(#${clipId})`, preserveAspectRatio: 'xMidYMid slice',
+  });
+}
+
+function renderWeb(centerFilm, nodes, svg, onNodeClick, highlightKey = null) {
+  svg.innerHTML = '';
+  const W  = svg.clientWidth  || 900;
+  const H  = svg.clientHeight || 600;
   const cx = W / 2;
   const cy = H / 2;
   const R  = Math.min(W, H) * 0.36;
+  // Clip ids must be unique across every SVG on the page
+  const idp  = svg.id || 'web';
+  const defs = svgEl('defs');
+  svg.appendChild(defs);
 
-  // Define clip paths for circular images
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-
-  // Center node clip
-  const clipC = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
-  clipC.setAttribute('id', 'clip-center');
-  const circC = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  circC.setAttribute('cx', cx); circC.setAttribute('cy', cy); circC.setAttribute('r', 44);
-  clipC.appendChild(circC);
-  defs.appendChild(clipC);
+  if (!nodes.length) {
+    svg.appendChild(svgEl('text', {
+      x: cx, y: cy + 90, 'text-anchor': 'middle', fill: COLORS.muted,
+      'font-family': 'DM Mono,monospace', 'font-size': 12,
+    }, BEARER ? 'No connections found' : 'Connect TMDB to find connections'));
+  }
 
   nodes.forEach((n, i) => {
     const angle = (2 * Math.PI * i / nodes.length) - Math.PI / 2;
-    const x     = cx + R * Math.cos(angle);
-    const y     = cy + R * Math.sin(angle);
-    n._x = x; n._y = y;
-
-    const clip = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
-    clip.setAttribute('id', `clip-${i}`);
-    const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circ.setAttribute('cx', x); circ.setAttribute('cy', y); circ.setAttribute('r', 30);
-    clip.appendChild(circ);
-    defs.appendChild(clip);
-  });
-  svg.appendChild(defs);
-
-  // Draw connection lines
-  nodes.forEach((n, i) => {
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
-    line.setAttribute('x2', n._x); line.setAttribute('y2', n._y);
-    line.setAttribute('stroke', highlightName === n.film.name ? '#c8971a' : '#2a2a32');
-    line.setAttribute('stroke-width', highlightName === n.film.name ? 2 : 1);
-    svg.appendChild(line);
-
-    // Connection label
-    const lx = (cx + n._x) / 2;
-    const ly = (cy + n._y) / 2;
-    const tag = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    tag.setAttribute('x', lx); tag.setAttribute('y', ly);
-    tag.setAttribute('text-anchor', 'middle');
-    tag.setAttribute('font-size', '9');
-    tag.setAttribute('fill', '#6b6b7a');
-    tag.setAttribute('font-family', 'DM Mono, monospace');
-    tag.textContent = n.shared.slice(0, 2).join(', ');
-    svg.appendChild(tag);
+    n._x = cx + R * Math.cos(angle);
+    n._y = cy + R * Math.sin(angle);
   });
 
-  // Draw satellite nodes
+  // Connection lines + labels
+  nodes.forEach(n => {
+    const hl = highlightKey === filmKey(n.film);
+    svg.appendChild(svgEl('line', {
+      x1: cx, y1: cy, x2: n._x, y2: n._y,
+      stroke: hl ? COLORS.gold : COLORS.line, 'stroke-width': hl ? 2 : 1,
+    }));
+    svg.appendChild(svgEl('text', {
+      x: (cx + n._x) / 2, y: (cy + n._y) / 2, 'text-anchor': 'middle',
+      'font-size': 9, fill: COLORS.muted, 'font-family': 'DM Mono, monospace',
+    }, n.shared.slice(0, 2).join(', ')));
+  });
+
+  // Satellite nodes
   nodes.forEach((n, i) => {
-    const tmdb     = TMDB_CACHE[`${n.film.name}|${n.film.year}`];
-    const poster   = tmdb?.poster;
-    const isTarget = highlightName === n.film.name;
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.style.cursor = 'pointer';
+    const isTarget = highlightKey === filmKey(n.film);
+    const g = svgEl('g', { style: 'cursor:pointer' });
     g.addEventListener('click', () => onNodeClick(n.film));
+    g.appendChild(svgEl('title', {}, `${n.film.name}${n.film.year ? ` (${n.film.year})` : ''}`));
 
-    // Outer ring
-    const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    ring.setAttribute('cx', n._x); ring.setAttribute('cy', n._y); ring.setAttribute('r', 33);
-    ring.setAttribute('fill', isTarget ? '#c8971a' : '#1a1a1e');
-    ring.setAttribute('stroke', isTarget ? '#c8971a' : '#3a3a46');
-    ring.setAttribute('stroke-width', isTarget ? 3 : 1);
-    g.appendChild(ring);
+    g.appendChild(svgEl('circle', {
+      cx: n._x, cy: n._y, r: 33,
+      fill:   isTarget ? COLORS.gold : COLORS.node,
+      stroke: isTarget ? COLORS.gold : COLORS.ring,
+      'stroke-width': isTarget ? 3 : 1,
+    }));
+    g.appendChild(svgPoster(defs, `${idp}-clip-${i}`, n.film, n._x, n._y, 30, 12, 9, COLORS.text));
 
-    if (poster) {
-      const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-      img.setAttribute('href', `${IMG}w92${poster}`);
-      img.setAttribute('x', n._x - 30); img.setAttribute('y', n._y - 30);
-      img.setAttribute('width', 60); img.setAttribute('height', 60);
-      img.setAttribute('clip-path', `url(#clip-${i})`);
-      img.setAttribute('preserveAspectRatio', 'xMidYMid slice');
-      g.appendChild(img);
-    } else {
-      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      txt.setAttribute('x', n._x); txt.setAttribute('y', n._y + 4);
-      txt.setAttribute('text-anchor', 'middle');
-      txt.setAttribute('font-size', '9');
-      txt.setAttribute('fill', '#d4cfc4');
-      txt.setAttribute('font-family', 'Inter, sans-serif');
-      txt.textContent = n.film.name.slice(0, 12);
-      g.appendChild(txt);
-    }
-
-    // Label below
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    lbl.setAttribute('x', n._x); lbl.setAttribute('y', n._y + 46);
-    lbl.setAttribute('text-anchor', 'middle');
-    lbl.setAttribute('font-size', '10');
-    lbl.setAttribute('fill', isTarget ? '#c8971a' : '#8a8494');
-    lbl.setAttribute('font-family', 'Inter, sans-serif');
+    // Title below, wrapped onto two lines of up to three words
     const words = n.film.name.split(' ');
-    const line1 = words.slice(0, 3).join(' ');
-    const line2 = words.slice(3, 6).join(' ');
-    lbl.textContent = line1;
-    g.appendChild(lbl);
-    if (line2) {
-      const lbl2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      lbl2.setAttribute('x', n._x); lbl2.setAttribute('y', n._y + 57);
-      lbl2.setAttribute('text-anchor', 'middle');
-      lbl2.setAttribute('font-size', '10');
-      lbl2.setAttribute('fill', isTarget ? '#c8971a' : '#8a8494');
-      lbl2.setAttribute('font-family', 'Inter, sans-serif');
-      lbl2.textContent = line2;
-      g.appendChild(lbl2);
-    }
+    [words.slice(0, 3).join(' '), words.slice(3, 6).join(' ')].forEach((line, li) => {
+      if (!line) return;
+      g.appendChild(svgEl('text', {
+        x: n._x, y: n._y + 46 + li * 11, 'text-anchor': 'middle', 'font-size': 10,
+        fill: isTarget ? COLORS.gold : COLORS.label, 'font-family': 'Inter, sans-serif',
+      }, line));
+    });
 
     svg.appendChild(g);
   });
 
   // Center node
-  const centerTmdb   = TMDB_CACHE[`${centerFilm.name}|${centerFilm.year}`];
-  const centerPoster = centerTmdb?.poster;
-  const cg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-
-  const cring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  cring.setAttribute('cx', cx); cring.setAttribute('cy', cy); cring.setAttribute('r', 47);
-  cring.setAttribute('fill', '#111113');
-  cring.setAttribute('stroke', '#c8971a');
-  cring.setAttribute('stroke-width', 2);
-  cg.appendChild(cring);
-
-  if (centerPoster) {
-    const cimg = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-    cimg.setAttribute('href', `${IMG}w92${centerPoster}`);
-    cimg.setAttribute('x', cx - 44); cimg.setAttribute('y', cy - 44);
-    cimg.setAttribute('width', 88); cimg.setAttribute('height', 88);
-    cimg.setAttribute('clip-path', 'url(#clip-center)');
-    cimg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
-    cg.appendChild(cimg);
-  } else {
-    const ctxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    ctxt.setAttribute('x', cx); ctxt.setAttribute('y', cy + 4);
-    ctxt.setAttribute('text-anchor', 'middle');
-    ctxt.setAttribute('font-size', '11');
-    ctxt.setAttribute('fill', '#e8e0cc');
-    ctxt.setAttribute('font-family', 'Inter, sans-serif');
-    ctxt.textContent = centerFilm.name.slice(0, 14);
-    cg.appendChild(ctxt);
-  }
-
-  const clbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-  clbl.setAttribute('x', cx); clbl.setAttribute('y', cy + 62);
-  clbl.setAttribute('text-anchor', 'middle');
-  clbl.setAttribute('font-size', '12');
-  clbl.setAttribute('fill', '#e8e0cc');
-  clbl.setAttribute('font-family', 'DM Serif Display, serif');
-  clbl.setAttribute('font-style', 'italic');
-  clbl.textContent = centerFilm.name.length > 22 ? centerFilm.name.slice(0, 22) + '…' : centerFilm.name;
-  cg.appendChild(clbl);
-
+  const cg = svgEl('g');
+  cg.appendChild(svgEl('circle', {
+    cx, cy, r: 47, fill: COLORS.center, stroke: COLORS.gold, 'stroke-width': 2,
+  }));
+  cg.appendChild(svgPoster(defs, `${idp}-clip-center`, centerFilm, cx, cy, 44, 14, 11, COLORS.cream));
+  cg.appendChild(svgEl('text', {
+    x: cx, y: cy + 62, 'text-anchor': 'middle', 'font-size': 12, fill: COLORS.cream,
+    'font-family': 'DM Serif Display, serif', 'font-style': 'italic',
+  }, centerFilm.name.length > 22 ? centerFilm.name.slice(0, 22) + '…' : centerFilm.name));
   svg.appendChild(cg);
 }
 
 /* =============================================
    WEB EXPLORER
    ============================================= */
-let webHistory   = [];
-let webConnType  = 'genre';
-let webSearchResults = [];
+let webHistory  = [];
+let webConnType = 'genre';
+let webLoadId   = 0;
 
 function initWebExplorer() {
-  renderWebSearch('webSearchInput', 'webSearchResults', film => {
+  attachFilmSearch('webSearchInput', 'webSearchResults', film => {
     webHistory = [];
     loadWebCenter(film);
   });
 
   document.getElementById('webConnType').addEventListener('change', e => {
     webConnType = e.target.value;
-    if (webHistory.length) loadWebCenter(webHistory[webHistory.length - 1]);
+    if (webHistory.length) loadWebCenter(webHistory.pop());
   });
 
   document.getElementById('webBackBtn').addEventListener('click', () => {
@@ -242,212 +206,202 @@ function initWebExplorer() {
 }
 
 async function loadWebCenter(film) {
+  const loadId = ++webLoadId;
   webHistory.push(film);
-  document.getElementById('webStatus').textContent = `Building web for "${film.name}"…`;
+  setText('webStatus', `Building web for "${film.name}"…`);
   document.getElementById('webBackBtn').style.display = webHistory.length > 1 ? 'inline-block' : 'none';
-  document.getElementById('webBreadcrumb').textContent = webHistory.map(f => f.name).join(' → ');
+  setText('webBreadcrumb', webHistory.map(f => f.name).join(' → '));
 
   const svg = document.getElementById('webSvg');
-  svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="#6b6b7a" font-family="DM Mono,monospace" font-size="13">Loading connections…</text>`;
+  svgMessage(svg, 'Loading connections…');
 
   const nodes = await buildWebData(film, webConnType);
-  document.getElementById('webStatus').textContent = `${nodes.length} connections found`;
-
-  renderWeb(film, nodes, svg, clickedFilm => {
-    loadWebCenter(clickedFilm);
-  });
+  if (loadId !== webLoadId) return;   // superseded by a newer click
+  setText('webStatus', `${nodes.length} connection${nodes.length === 1 ? '' : 's'} found`);
+  renderWeb(film, nodes, svg, loadWebCenter);
 }
 
 /* =============================================
    GAME
    ============================================= */
-let gameStart   = null;
-let gameEnd     = null;
-let gamePath    = [];
-let gameMoves   = 0;
-let gameActive  = false;
-let gameTimer   = null;
-let gameSeconds = 0;
+const game = {
+  start: null, end: null, path: [], moves: 0,
+  active: false, timer: null, seconds: 0, loadId: 0,
+};
 
 function initGame() {
   document.getElementById('gameGiveUpBtn').addEventListener('click', giveUpGame);
-
-  renderWebSearch('gameSearchStart', 'gameSearchStartResults', film => {
-    gameStart = film;
-    document.getElementById('gameStartLabel').textContent = film.name;
-    checkGameReady();
-  });
-  renderWebSearch('gameSearchEnd', 'gameSearchEndResults', film => {
-    gameEnd = film;
-    document.getElementById('gameEndLabel').textContent = film.name;
-    checkGameReady();
-  });
+  attachFilmSearch('gameSearchStart', 'gameSearchStartResults', film => setGameFilm('start', film));
+  attachFilmSearch('gameSearchEnd',   'gameSearchEndResults',   film => setGameFilm('end',   film));
 }
 
-function checkGameReady() {
-  const btn = document.getElementById('gameNewBtn');
-  btn.disabled = !(gameStart && gameEnd && gameStart.name !== gameEnd.name);
+function setGameFilm(which, film) {
+  game[which] = film;
+  setText(which === 'start' ? 'gameStartLabel' : 'gameEndLabel', film.name);
+  document.getElementById(which === 'start' ? 'gameSearchStart' : 'gameSearchEnd').value = film.name;
+  document.getElementById('gameNewBtn').disabled =
+    !(game.start && game.end && filmKey(game.start) !== filmKey(game.end));
+}
+
+const formatTime = secs =>
+  `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+const pathStr = () => game.path.map(f => escapeHtml(f.name)).join(' → ');
+
+function stopGame() {
+  game.active = false;
+  clearInterval(game.timer);
+  document.getElementById('gameGiveUpBtn').style.display = 'none';
 }
 
 async function startNewGame() {
-  if (!gameStart || !gameEnd) return;
-  gamePath    = [gameStart];
-  gameMoves   = 0;
-  gameActive  = true;
-  gameSeconds = 0;
+  if (!game.start || !game.end) return;
+  Object.assign(game, { path: [game.start], moves: 0, active: true, seconds: 0 });
 
-  document.getElementById('gameSetup').style.display    = 'none';
-  document.getElementById('gameActive').style.display   = 'block';
-  document.getElementById('gameMoveCount').textContent  = 0;
-  document.getElementById('gamePathDisplay').textContent = gameStart.name;
-  document.getElementById('gameTargetName').textContent  = gameEnd.name;
+  document.getElementById('gameSetup').style.display     = 'none';
+  document.getElementById('gameActive').style.display    = 'block';
   document.getElementById('gameGiveUpBtn').style.display = 'inline-block';
+  document.getElementById('gameResult').innerHTML        = '';
+  setText('gameMoveCount',   0);
+  setText('gameTimer',       formatTime(0));
+  setText('gamePathDisplay', game.start.name);
+  setText('gameTargetName',  game.end.name);
 
-  // Show target poster
-  const endTmdb = await fetchTMDB(gameEnd);
-  const tpEl    = document.getElementById('gameTargetPoster');
-  if (endTmdb?.poster) {
-    tpEl.src   = `${IMG}w92${endTmdb.poster}`;
+  clearInterval(game.timer);
+  game.timer = setInterval(() => setText('gameTimer', formatTime(++game.seconds)), 1000);
+
+  const tpEl = document.getElementById('gameTargetPoster');
+  tpEl.style.display = 'none';
+  fetchTMDB(game.end).then(tmdb => {
+    if (!tmdb?.poster) return;
+    tpEl.src = `${IMG}w92${tmdb.poster}`;
     tpEl.style.display = 'block';
-  } else { tpEl.style.display = 'none'; }
+  });
 
-  // Timer
-  clearInterval(gameTimer);
-  gameTimer = setInterval(() => {
-    gameSeconds++;
-    const m = Math.floor(gameSeconds / 60).toString().padStart(2, '0');
-    const s = (gameSeconds % 60).toString().padStart(2, '0');
-    document.getElementById('gameTimer').textContent = `${m}:${s}`;
-  }, 1000);
-
-  await loadGameWeb(gameStart);
+  await loadGameWeb(game.start);
 }
 
 async function loadGameWeb(film) {
+  const loadId = ++game.loadId;
   const svg = document.getElementById('gameSvg');
-  svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="#6b6b7a" font-family="DM Mono,monospace" font-size="13">Finding connections…</text>`;
-  document.getElementById('gameCurrentName').textContent = film.name;
+  svgMessage(svg, 'Finding connections…');
+  setText('gameCurrentName', film.name);
 
   const nodes = await buildWebData(film, 'genre');
-
-  // Check if target is in this web
-  const targetInWeb = nodes.find(n => n.film.name === gameEnd.name);
+  if (loadId !== game.loadId) return;
 
   renderWeb(film, nodes, svg, async clickedFilm => {
-    if (!gameActive) return;
-    gameMoves++;
-    gamePath.push(clickedFilm);
-    document.getElementById('gameMoveCount').textContent  = gameMoves;
-    document.getElementById('gamePathDisplay').textContent = gamePath.map(f => f.name).join(' → ');
+    if (!game.active) return;
+    game.moves++;
+    game.path.push(clickedFilm);
+    setText('gameMoveCount', game.moves);
+    setText('gamePathDisplay', game.path.map(f => f.name).join(' → '));
 
-    if (clickedFilm.name === gameEnd.name) {
-      // WIN
-      gameActive = false;
-      clearInterval(gameTimer);
-      const m = Math.floor(gameSeconds / 60).toString().padStart(2, '0');
-      const s = (gameSeconds % 60).toString().padStart(2, '0');
+    if (filmKey(clickedFilm) === filmKey(game.end)) {
+      stopGame();
       document.getElementById('gameResult').innerHTML = `
         <div class="game-win">
-          🎬 You got there in <strong>${gameMoves} moves</strong> and <strong>${m}:${s}</strong>!
-          <br/><span style="font-size:13px;color:var(--muted)">${gamePath.map(f => f.name).join(' → ')}</span>
-        </div>
-      `;
-      document.getElementById('gameGiveUpBtn').style.display = 'none';
+          🎬 You got there in <strong>${game.moves} move${game.moves === 1 ? '' : 's'}</strong>
+          and <strong>${formatTime(game.seconds)}</strong>!
+          <br/><span style="font-size:13px;color:var(--muted)">${pathStr()}</span>
+        </div>`;
     } else {
       document.getElementById('gameResult').innerHTML = '';
       await loadGameWeb(clickedFilm);
     }
-  }, gameEnd.name);
+  }, filmKey(game.end));
 }
 
 function giveUpGame() {
-  gameActive = false;
-  clearInterval(gameTimer);
+  stopGame();
   document.getElementById('gameResult').innerHTML = `
     <div class="game-lose">
-      Better luck next time. Path so far: ${gamePath.map(f => f.name).join(' → ')}
-    </div>
-  `;
-  document.getElementById('gameGiveUpBtn').style.display = 'none';
-  // Reveal the target film
-  loadGameWeb(gamePath[gamePath.length - 1]);
+      Better luck next time. The target was <strong>${escapeHtml(game.end.name)}</strong>.
+      Path so far: ${pathStr()}
+    </div>`;
 }
 
 function resetGame() {
-  gameActive = false;
-  clearInterval(gameTimer);
-  gameStart = null; gameEnd = null;
-  gamePath  = []; gameMoves = 0; gameSeconds = 0;
+  stopGame();
+  game.loadId++;
+  Object.assign(game, { start: null, end: null, path: [], moves: 0, seconds: 0 });
   document.getElementById('gameSetup').style.display  = 'block';
   document.getElementById('gameActive').style.display = 'none';
   document.getElementById('gameResult').innerHTML     = '';
-  document.getElementById('gameStartLabel').textContent = 'Not chosen';
-  document.getElementById('gameEndLabel').textContent   = 'Not chosen';
-  document.getElementById('gameTimer').textContent      = '00:00';
+  document.getElementById('gameSearchStart').value    = '';
+  document.getElementById('gameSearchEnd').value      = '';
+  setText('gameStartLabel', 'Not chosen');
+  setText('gameEndLabel',   'Not chosen');
+  setText('gameTimer',      formatTime(0));
   document.getElementById('gameNewBtn').disabled = true;
+}
+
+function randomGame() {
+  const pool = WATCHED.filter(f => f.rating >= 3);
+  if (pool.length < 2) return;
+  const pick  = () => pool[Math.floor(Math.random() * pool.length)];
+  const start = pick();
+  let end = pick();
+  while (filmKey(end) === filmKey(start)) end = pick();
+  setGameFilm('start', start);
+  setGameFilm('end',   end);
 }
 
 /* =============================================
    SHARED FILM SEARCH AUTOCOMPLETE
    ============================================= */
-function renderWebSearch(inputId, resultsId, onSelect) {
+function attachFilmSearch(inputId, resultsId, onSelect) {
   const input   = document.getElementById(inputId);
   const results = document.getElementById(resultsId);
-  if (!input || !results) return;
+  if (!input || !results || input.dataset.searchBound) return;
+  input.dataset.searchBound = '1';
 
-  function showMatches() {
-    const q = input.value.toLowerCase().trim();
-    if (!q || q.length < 2) { results.style.display = 'none'; return; }
-    const matches = DIARY.filter(f => f.name.toLowerCase().includes(q)).slice(0, 8);
-    if (!matches.length) { results.style.display = 'none'; return; }
-    results._matches = matches;
-    results.innerHTML = matches.map((f, i) => `
-      <div class="search-result-item" data-idx="${i}">${escapeHtml(f.name)} <span style="color:var(--muted);font-size:11px;">${f.year||''}</span></div>
-    `).join('');
-    results.style.display = 'block';
-    results.querySelectorAll('.search-result-item').forEach(el => {
-      el.addEventListener('click', () => {
-        const film = results._matches[parseInt(el.dataset.idx)];
-        input.value = film.name;
-        results.style.display = 'none';
-        onSelect(film);
-      });
+  let matches = [];
+  let active  = 0;
+
+  const hide = () => { results.style.display = 'none'; matches = []; };
+  const choose = film => {
+    input.value = film.name;
+    hide();
+    onSelect(film);
+  };
+  const highlight = () => {
+    results.querySelectorAll('.search-result-item').forEach((el, i) => {
+      el.classList.toggle('active', i === active);
+      el.style.background = i === active ? 'var(--surface3)' : '';
     });
-  }
+  };
 
-  input.addEventListener('input', showMatches);
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase().trim();
+    matches = q.length < 2 ? [] : DIARY
+      .filter(f => f.name.toLowerCase().includes(q))
+      // Titles that start with the query rank first
+      .sort((a, b) => b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q))
+      .slice(0, 8);
+    if (!matches.length) return hide();
 
-  // Enter key picks first result
+    active = 0;
+    results.innerHTML = matches.map((f, i) => `
+      <div class="search-result-item" data-idx="${i}">${escapeHtml(f.name)}
+        <span style="color:var(--muted);font-size:11px;">${f.year || ''}</span></div>`).join('');
+    results.style.display = 'block';
+    highlight();
+  });
+
+  results.addEventListener('click', e => {
+    const el = e.target.closest('.search-result-item');
+    if (el) choose(matches[parseInt(el.dataset.idx, 10)]);
+  });
+
   input.addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    if (results._matches && results._matches.length) {
-      const film = results._matches[0];
-      input.value = film.name;
-      results.style.display = 'none';
-      onSelect(film);
-    }
+    if (!matches.length) return;
+    if (e.key === 'ArrowDown')    { active = (active + 1) % matches.length; highlight(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { active = (active - 1 + matches.length) % matches.length; highlight(); e.preventDefault(); }
+    else if (e.key === 'Enter')   choose(matches[active]);
+    else if (e.key === 'Escape')  hide();
   });
 
   document.addEventListener('click', e => {
-    if (!results.contains(e.target) && e.target !== input) {
-      results.style.display = 'none';
-    }
+    if (!results.contains(e.target) && e.target !== input) hide();
   });
-}
-
-/* =============================================
-   GAME RANDOM SETUP
-   ============================================= */
-function randomGame() {
-  const pool = DIARY.filter(f => f.rating >= 3);
-  gameStart  = pool[Math.floor(Math.random() * pool.length)];
-  gameEnd    = pool[Math.floor(Math.random() * pool.length)];
-  while (gameEnd.name === gameStart.name) {
-    gameEnd = pool[Math.floor(Math.random() * pool.length)];
-  }
-  document.getElementById('gameStartLabel').textContent = gameStart.name;
-  document.getElementById('gameEndLabel').textContent   = gameEnd.name;
-  document.getElementById('gameSearchStart').value = gameStart.name;
-  document.getElementById('gameSearchEnd').value   = gameEnd.name;
-  checkGameReady();
 }

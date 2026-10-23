@@ -14,3 +14,5 @@ Static GitHub Pages site (no build step): `index.html`, `style.css`, `app.js`, `
 
 ## Service worker
 - `sw.js` caches the app shell network-first. Add any new top-level file to its `SHELL` list.
+- Bump `VERSION` in `sw.js` with every code change: open home-screen apps detect the new
+  service worker when they return to the foreground and reload themselves.

@@ -71,7 +71,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Offline support + "Add to Home Screen" app (needs https or localhost)
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // A home-screen app is often resumed rather than relaunched, so look for a new
+  // version whenever it comes back to the foreground and reload once one takes over
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch(() => {});
+  });
 }
 
 async function fetchCsv(url) {

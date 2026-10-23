@@ -974,3 +974,11 @@ body {
   .game-setup-actions { flex-wrap: wrap; }
   .game-hud { gap: 1rem; padding: 0.75rem 1rem; }
 }
+
+/* =============================================
+   YOUR DATA / IMPORT
+   ============================================= */
+label.cta-primary, label.cta-secondary { display: inline-block; cursor: pointer; font-family: var(--font-body); }
+.data-status { font-size: 14px; color: var(--text); margin-bottom: 1rem; }
+.data-status.error { color: #e74c3c; }
+.data-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 0.75rem; }

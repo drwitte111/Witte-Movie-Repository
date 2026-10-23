@@ -44,9 +44,9 @@
       <div class="upload-icon">🎬</div>
       <h2 class="upload-title">drwitte<span class="wordmark-slash">/</span>films</h2>
       <p class="upload-desc">Upload your Letterboxd diary export to get started.<br/>Your data stays in your browser — nothing is sent anywhere.</p>
-      <label class="upload-btn" for="csvInput">Choose diary.csv + ratings.csv</label>
-      <input type="file" id="csvInput" accept=".csv" multiple style="display:none;" />
-      <p class="upload-hint">Export from Letterboxd → Settings → Import & Export → Export Your Data</p>
+      <label class="upload-btn" for="csvInput">Choose Letterboxd export</label>
+      <input type="file" id="csvInput" accept=".zip,.csv,application/zip,text/csv" multiple style="display:none;" />
+      <p class="upload-hint">Letterboxd → Settings → Import &amp; Export → Export Your Data.<br/>Pick the .zip as downloaded, or diary.csv + ratings.csv.</p>
       <button class="upload-clear-btn" id="clearDataBtn" style="display:none;">Clear saved data & re-upload</button>
     </div>
   </div>
@@ -67,6 +67,7 @@
         <div class="hero-cta-row">
           <button class="cta-primary" onclick="switchView('wall')">Browse poster wall →</button>
           <button class="cta-secondary" onclick="switchView('web')">Explore web →</button>
+          <label class="cta-secondary" for="importInput">Import Letterboxd data</label>
         </div>
       </div>
       <div class="hero-right">
@@ -80,6 +81,16 @@
     <section class="section">
       <h2 class="section-title">Five-star films</h2>
       <div class="five-star-list" id="fiveStarList"></div>
+    </section>
+    <section class="section data-section">
+      <h2 class="section-title">Your data</h2>
+      <p class="data-status" id="dataStatus"></p>
+      <div class="data-actions">
+        <label class="cta-primary" for="importInput">Import Letterboxd export</label>
+        <button class="cta-secondary" id="resetDataBtn" hidden>Use site data</button>
+      </div>
+      <p class="upload-hint">Letterboxd → Settings → Import &amp; Export → Export Your Data. Pick the .zip as downloaded (no need to unzip), or diary.csv + ratings.csv. Imports stay on this device.</p>
+      <input type="file" id="importInput" accept=".zip,.csv,application/zip,text/csv" multiple hidden />
     </section>
   </main>
 

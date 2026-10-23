@@ -8,12 +8,14 @@ const RATINGS_URL = 'ratings.csv';   // optional: current film ratings from the 
 
 const LS = {
   token:   'tmdb_token',
-  diary:   'diary_data',
+  diary:   'diary_data',      // legacy: parsed upload from older versions
+  import:  'letterboxd_import',
   tmdb:    'tmdb_cache',
   credits: 'tmdb_credits',
 };
 
 let DIARY   = [];   // every logged film (the whole collection)
+let DATA_SOURCE = { kind: 'site' };   // 'site' = repo CSVs, 'import' = export imported on this device
 let WATCHED = [];   // films with a rating: 0.5 = seen/unrated, 1–5 = rated
 let FILM_BY_ID = new Map();
 let BEARER  = localStorage.getItem(LS.token) || '';
@@ -40,12 +42,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
-  document.getElementById('csvInput').addEventListener('change', handleCsvUpload);
-  document.getElementById('clearDataBtn').addEventListener('click', () => {
-    if (!confirm('Clear your saved diary and start over?')) return;
-    localStorage.removeItem(LS.diary);
-    location.reload();
-  });
+  document.getElementById('csvInput').addEventListener('change', handleImport);
+  document.getElementById('importInput').addEventListener('change', handleImport);
+  document.getElementById('clearDataBtn').addEventListener('click', resetToSiteData);
+  document.getElementById('resetDataBtn').addEventListener('click', resetToSiteData);
+  localStorage.removeItem(LS.diary);
 
   // Any element with data-film opens that film's modal
   document.addEventListener('click', e => {
@@ -54,23 +55,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-  // Prefer the CSVs published with the site, then a previously uploaded export
+  // Use whichever is newer: the CSVs published with the site, or an export imported on this device
   const [diaryCsv, ratingsCsv] = await Promise.all([fetchCsv(DIARY_URL), fetchCsv(RATINGS_URL)]);
-  if (diaryCsv) {
-    setDiary(applyRatings(parseLetterboxdCsv(diaryCsv), ratingsCsv));
-    return showApp();
-  }
+  const site  = diaryCsv ? { diary: diaryCsv, ratings: ratingsCsv } : null;
+  const saved = loadImport();
+  const useImport = saved && (!site || latestLogged(saved.diary) >= latestLogged(site.diary));
+  if (saved && !useImport) localStorage.removeItem(LS.import);   // the site has caught up
 
-  const saved = localStorage.getItem(LS.diary);
-  if (saved) {
-    try {
-      setDiary(JSON.parse(saved));
-      return showApp();
-    } catch (e) {
-      localStorage.removeItem(LS.diary);
-    }
-  }
-  showUploadScreen();
+  const source = useImport ? saved : site;
+  if (!source) return showUploadScreen();
+  DATA_SOURCE = useImport ? { kind: 'import', at: saved.importedAt } : { kind: 'site' };
+  loadData(source.diary, source.ratings);
+  showApp();
 });
 
 // Offline support + "Add to Home Screen" app (needs https or localhost)
@@ -89,6 +85,12 @@ async function fetchCsv(url) {
   }
 }
 
+function loadData(diaryCsv, ratingsCsv) {
+  const records = applyRatings(parseLetterboxdCsv(diaryCsv), ratingsCsv);
+  if (!records.length) throw new Error('No films found in this export');
+  setDiary(records);
+}
+
 function setDiary(records) {
   DIARY = records.map((f, i) => ({ ...f, id: f.id || String(i) }));
   WATCHED = DIARY.filter(isWatched);
@@ -101,33 +103,147 @@ function setDiary(records) {
 function showUploadScreen() {
   document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
   document.getElementById('uploadScreen').style.display = 'flex';
-  if (localStorage.getItem(LS.diary)) {
-    document.getElementById('clearDataBtn').style.display = 'inline-block';
+}
+
+/* =============================================
+   IMPORT LETTERBOXD EXPORT
+   Accepts the export .zip as downloaded, or diary.csv (+ ratings.csv) picked together.
+   The import is kept on this device only.
+   ============================================= */
+async function handleImport(e) {
+  const input = e.target;
+  const files = Array.from(input.files || []);
+  input.value = '';   // let the same file be picked again later
+  if (!files.length) return;
+
+  setDataStatus('Reading export…');
+  try {
+    const { diary, ratings } = await readExportFiles(files);
+    loadData(diary, ratings);
+
+    const importedAt = new Date().toISOString();
+    let saved = true;
+    try {
+      localStorage.setItem(LS.import, JSON.stringify({ diary, ratings, importedAt }));
+    } catch (err) { saved = false; }
+    DATA_SOURCE = { kind: 'import', at: importedAt };
+    showApp();
+    if (!saved) setDataStatus(`Imported ${DIARY.length} films, but this device has no room to keep them after closing.`, true);
+  } catch (err) {
+    setDataStatus('Could not import: ' + err.message, true);
+    showImportError(err.message);
   }
 }
 
-// Accepts diary.csv alone, or diary.csv + ratings.csv selected together
-async function handleCsvUpload(e) {
-  const files = Array.from(e.target.files || []);
-  if (!files.length) return;
-  try {
-    const texts   = await Promise.all(files.map(f => f.text()));
-    const diary   = texts.find(t => firstLine(t).includes('Watched Date'));
-    const ratings = texts.find(t => t !== diary && firstLine(t).includes('Rating'));
-    if (!diary) throw new Error('Choose your diary.csv (and optionally ratings.csv)');
-    const records = applyRatings(parseLetterboxdCsv(diary), ratings);
-    if (!records.length) throw new Error('No films found in this export');
-    setDiary(records);
-    localStorage.setItem(LS.diary, JSON.stringify(DIARY));
-    showApp();
-  } catch (err) {
-    const box = document.querySelector('.upload-box');
-    box.querySelector('.upload-error')?.remove();
-    const msg = document.createElement('p');
-    msg.className = 'upload-error';
-    msg.textContent = 'Could not read file: ' + err.message;
-    box.appendChild(msg);
+async function readExportFiles(files) {
+  let diary = null, ratings = null;
+  for (const file of files) {
+    if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
+      const entries = await unzip(await file.arrayBuffer(), ['diary.csv', 'ratings.csv']);
+      diary   = entries['diary.csv']   || diary;
+      ratings = entries['ratings.csv'] || ratings;
+    } else {
+      const text = await file.text();
+      const head = firstLine(text);
+      if (head.includes('Watched Date')) diary = text;
+      else if (head.includes('Rating'))  ratings = text;
+    }
   }
+  if (!diary) throw new Error('No diary.csv found. Pick the Letterboxd export .zip, or diary.csv + ratings.csv.');
+  return { diary, ratings };
+}
+
+function resetToSiteData() {
+  if (!confirm('Forget the export imported on this device and use the data published on the site?')) return;
+  localStorage.removeItem(LS.import);
+  location.reload();
+}
+
+function loadImport() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS.import) || 'null');
+    return saved?.diary ? saved : null;
+  } catch (e) { return null; }
+}
+
+// Newest "Date" (logged date) in a diary CSV; ISO dates compare as strings
+function latestLogged(diaryCsv) {
+  return parseLetterboxdCsv(diaryCsv).reduce((max, f) => f.loggedDate > max ? f.loggedDate : max, '');
+}
+
+function showImportError(message) {
+  if (document.getElementById('uploadScreen').style.display === 'none') return;
+  const box = document.querySelector('.upload-box');
+  box.querySelector('.upload-error')?.remove();
+  const msg = document.createElement('p');
+  msg.className = 'upload-error';
+  msg.textContent = 'Could not read file: ' + message;
+  box.appendChild(msg);
+}
+
+function setDataStatus(text, isError = false) {
+  const el = document.getElementById('dataStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+}
+
+function describeDataSource() {
+  const latest = DIARY.reduce((max, f) => f.loggedDate > max ? f.loggedDate : max, '');
+  const isImport = DATA_SOURCE.kind === 'import';
+  document.getElementById('resetDataBtn').hidden = !isImport;
+  setDataStatus(`${DIARY.length} films, latest entry ${latest || '—'}. ` + (isImport
+    ? `Using the export imported on this device ${new Date(DATA_SOURCE.at).toLocaleDateString()}.`
+    : 'Using the data published on the site.'));
+}
+
+/* =============================================
+   MINIMAL ZIP READER
+   Reads the central directory and inflates the wanted top-level files with the
+   browser's DecompressionStream (Safari 16.4+, Chrome 80+), so no library is needed.
+   ============================================= */
+async function unzip(buffer, wanted) {
+  const view  = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const utf8  = new TextDecoder();
+
+  // End of central directory record: scan back past an optional comment
+  let eocd = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 65557); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('That file is not a valid .zip');
+
+  const count = view.getUint16(eocd + 10, true);
+  let ptr = view.getUint32(eocd + 16, true);
+  const out = {};
+
+  for (let n = 0; n < count && view.getUint32(ptr, true) === 0x02014b50; n++) {
+    const method     = view.getUint16(ptr + 10, true);
+    const compSize   = view.getUint32(ptr + 20, true);
+    const nameLen    = view.getUint16(ptr + 28, true);
+    const extraLen   = view.getUint16(ptr + 30, true);
+    const commentLen = view.getUint16(ptr + 32, true);
+    const localOff   = view.getUint32(ptr + 42, true);
+    const name       = utf8.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
+    ptr += 46 + nameLen + extraLen + commentLen;
+
+    // Only top-level files: the export also has deleted/diary.csv etc.
+    if (!wanted.includes(name)) continue;
+
+    const dataStart = localOff + 30 + view.getUint16(localOff + 26, true) + view.getUint16(localOff + 28, true);
+    const data = bytes.subarray(dataStart, dataStart + compSize);
+    if (method === 0) {
+      out[name] = utf8.decode(data);
+    } else if (method === 8) {
+      if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot open .zip files; pick the CSVs instead');
+      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      out[name] = await new Response(stream).text();
+    } else {
+      throw new Error(`Unsupported compression in ${name}`);
+    }
+  }
+  return out;
 }
 
 const firstLine = text => text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0];
@@ -245,10 +361,14 @@ function showApp() {
 
   renderHome();
   renderStats();
+  describeDataSource();
 
-  // Defined in web.js
-  if (typeof initWebExplorer === 'function') initWebExplorer();
-  if (typeof initGame        === 'function') initGame();
+  // Defined in web.js; their listeners must only be attached once
+  if (!showApp.initialised) {
+    showApp.initialised = true;
+    if (typeof initWebExplorer === 'function') initWebExplorer();
+    if (typeof initGame        === 'function') initGame();
+  }
 }
 
 function renderHome() {

@@ -1005,8 +1005,8 @@ label.cta-primary, label.cta-secondary { display: inline-block; cursor: pointer;
 .swipe-card.top:active { cursor: grabbing; }
 .swipe-poster { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .swipe-poster.blank {
-  display: flex; align-items: center; justify-content: center; padding: 2rem;
-  font-family: var(--font-display); font-size: 1.6rem; color: var(--cream); text-align: center;
+  display: flex; align-items: flex-start; justify-content: center; padding: 22% 2rem 0;
+  font-family: var(--font-display); font-size: 1.6rem; color: var(--muted); text-align: center;
 }
 .swipe-info {
   position: absolute; left: 0; right: 0; bottom: 0;
@@ -1055,4 +1055,18 @@ label.cta-primary, label.cta-secondary { display: inline-block; cursor: pointer;
   #swipeDeckWrap { max-width: min(340px, calc((100dvh - 330px) * 0.667)); }
   .swipe-stack { margin-bottom: 0.75rem; }
   .swipe-btn { width: 56px; height: 56px; font-size: 22px; }
+}
+.swipe-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.swipe-mode { display: inline-flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 999px; padding: 3px; margin-bottom: 1rem; }
+.swipe-mode-btn {
+  background: none; border: none; color: var(--muted);
+  font-size: 13px; padding: 6px 14px; border-radius: 999px;
+  transition: background 0.15s, color 0.15s;
+}
+.swipe-mode-btn.active { background: var(--surface3); color: var(--cream); }
+.swipe-seen { font-family: var(--font-mono); font-size: 11px; color: var(--gold); margin-bottom: 4px; }
+@media (max-width: 600px) {
+  .swipe-mode { margin-bottom: 0.5rem; }
+  .swipe-mode-btn { font-size: 14px; padding: 6px 16px; }
+  #swipeDeckWrap { max-width: min(340px, calc((100dvh - 375px) * 0.667)); }
 }

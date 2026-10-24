@@ -1,7 +1,7 @@
 /* =============================================
    SWIPE — "Tinder for movies"
-   Deals unwatched films from the collection; yes/no swipes plus the taste in your
-   existing ratings rank the rest of the backlog.
+   Deals films from the collection (unwatched only, or everything); yes/no swipes plus
+   the taste in your existing ratings rank the rest.
    Requires: app.js loaded first (DIARY, TMDB_CACHE, BEARER, fetchTMDB, filmKey,
    isWatched, mapLimit, IMG, escapeHtml, openModal, setText)
    ============================================= */
@@ -19,14 +19,19 @@ function loadSwipeSession() {
     const s = JSON.parse(localStorage.getItem(SWIPE_LS) || 'null');
     if (s?.deck && s.votes) return s;
   } catch (e) { /* fall through */ }
-  return { deck: [], index: 0, votes: {}, history: [] };
+  return newSwipeSession('unwatched');
+}
+
+function newSwipeSession(mode) {
+  return { mode, deck: [], index: 0, votes: {}, history: [] };
 }
 
 function saveSwipeSession() {
   try { localStorage.setItem(SWIPE_LS, JSON.stringify(swipe)); } catch (e) { /* storage full */ }
 }
 
-const swipePool  = () => DIARY.filter(f => !isWatched(f));
+// 'unwatched' = not seen yet; 'all' = whole collection, rewatches included
+const swipePool  = () => swipe.mode === 'all' ? DIARY : DIARY.filter(f => !isWatched(f));
 const filmByKey  = key => DIARY.find(f => filmKey(f) === key);
 const tmdbOf     = f => TMDB_CACHE[filmKey(f)] || null;
 
@@ -42,12 +47,17 @@ async function showSwipe() {
     document.getElementById('swipeRestart').addEventListener('click', restartSwipe);
     document.getElementById('swipeMore').addEventListener('click', dealMore);
     document.getElementById('swipeCopy').addEventListener('click', copySwipeSummary);
+    document.querySelectorAll('.swipe-mode-btn').forEach(btn =>
+      btn.addEventListener('click', () => setSwipeMode(btn.dataset.mode)));
     document.addEventListener('keydown', e => {
       if (!isVisible('viewSwipe') || document.getElementById('modalOverlay').classList.contains('open')) return;
       if (e.key === 'ArrowLeft')  vote(-1);
       if (e.key === 'ArrowRight') vote(1);
     });
   }
+
+  swipe.mode = swipe.mode || 'unwatched';
+  renderSwipeMode();
 
   // Drop films that have been watched or removed since the deck was dealt
   const poolKeys = new Set(swipePool().map(filmKey));
@@ -69,11 +79,12 @@ async function prefetchPool() {
   if (!BEARER || !missing.length) return;
   let done = 0;
   const status = document.getElementById('swipeStatus');
-  status.textContent = `Getting to know your backlog… 0 / ${missing.length}`;
+  const what = swipe.mode === 'all' ? 'collection' : 'backlog';
+  status.textContent = `Getting to know your ${what}… 0 / ${missing.length}`;
   status.hidden = false;
   await mapLimit(missing, 6, async f => {
     await fetchTMDB(f);
-    status.textContent = `Getting to know your backlog… ${++done} / ${missing.length}`;
+    status.textContent = `Getting to know your ${what}… ${++done} / ${missing.length}`;
   });
   status.hidden = true;
 }
@@ -141,7 +152,7 @@ function scoreFilm(f, prior, mood) {
    model is least sure about.
    ============================================= */
 function pickCards(count) {
-  const seen = new Set(swipe.deck);
+  const seen = new Set([...swipe.deck, ...Object.keys(swipe.votes)]);
   const pool = swipePool().filter(f => !seen.has(filmKey(f)));
   const hasData = f => tmdbOf(f)?.genres?.length;
   const candidates = pool.some(hasData) ? pool.filter(hasData) : pool;
@@ -218,10 +229,30 @@ function undoVote() {
 
 function restartSwipe() {
   if (Object.keys(swipe.votes).length && !confirm('Clear your swipes and deal a new deck?')) return;
-  swipe = { deck: [], index: 0, votes: {}, history: [] };
+  swipe = newSwipeSession(swipe.mode);
   swipe.deck = pickCards(SWIPE_DECK_SIZE);
   saveSwipeSession();
   renderSwipe();
+}
+
+// Swipes so far still count; a fresh deck is dealt from the new pool
+async function setSwipeMode(mode) {
+  if (mode === swipe.mode) return;
+  swipe.mode = mode;
+  swipe.deck = swipe.deck.slice(0, swipe.index);
+  renderSwipeMode();
+  await prefetchPool();
+  swipe.deck.push(...pickCards(SWIPE_DECK_SIZE));
+  saveSwipeSession();
+  renderSwipe();
+}
+
+function renderSwipeMode() {
+  document.querySelectorAll('.swipe-mode-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.mode === swipe.mode));
+  setText('swipeDesc', swipe.mode === 'all'
+    ? 'Swipe right if you’d watch it tonight, left if not. Cards come from your whole collection, rewatches included.'
+    : 'Swipe right if you’d watch it tonight, left if not. All cards come from your unwatched films.');
 }
 
 function dealMore() {
@@ -261,6 +292,9 @@ function buildCard(f, isTop) {
   card.className = 'swipe-card' + (isTop ? ' top' : '');
   const meta = [f.year, t?.runtime ? `${t.runtime} min` : null, t?.tmdbRating ? `TMDB ${t.tmdbRating}` : null]
     .filter(Boolean).join(' · ');
+  const seenBadge = !isWatched(f) ? '' : f.rating >= 1
+    ? `<div class="swipe-seen">Seen · your rating ${starsStr(f.rating)}</div>`
+    : '<div class="swipe-seen">Seen</div>';
   card.innerHTML = `
     ${t?.poster
       ? `<img class="swipe-poster" src="${IMG}w500${t.poster}" alt="" draggable="false" />`
@@ -268,6 +302,7 @@ function buildCard(f, isTop) {
     <div class="swipe-stamp yes">YES</div>
     <div class="swipe-stamp no">NOPE</div>
     <div class="swipe-info">
+      ${seenBadge}
       <div class="swipe-title">${escapeHtml(f.name)}</div>
       <div class="swipe-meta">${escapeHtml(meta)}</div>
       ${t?.genres?.length ? `<div class="swipe-genres">${t.genres.slice(0, 3).map(g => `<span class="genre-pill">${escapeHtml(g)}</span>`).join('')}</div>` : ''}
@@ -315,7 +350,8 @@ function swipeRanking() {
   const rank = films => films
     .map(f => ({ f, ...scoreFilm(f, prior, mood) }))
     .sort((a, b) => b.score - a.score);
-  const yesFilms = Object.keys(swipe.votes).filter(k => swipe.votes[k] > 0).map(filmByKey).filter(Boolean);
+  const inPool   = new Set(swipePool().map(filmKey));
+  const yesFilms = Object.keys(swipe.votes).filter(k => swipe.votes[k] > 0 && inPool.has(k)).map(filmByKey).filter(Boolean);
   const others   = swipePool().filter(f => !(filmKey(f) in swipe.votes));
   return { yes: rank(yesFilms), picks: rank(others).slice(0, 12), mood };
 }
@@ -353,11 +389,11 @@ function renderSwipeResults() {
    ============================================= */
 async function copySwipeSummary() {
   const { yes, picks, mood } = swipeRanking();
-  const name = f => `${f.name} (${f.year || '?'})`;
+  const name = f => `${f.name} (${f.year || '?'})${f.rating >= 1 ? `, rated ${f.rating}` : isWatched(f) ? ', seen' : ''}`;
   const noFilms = Object.keys(swipe.votes).filter(k => swipe.votes[k] < 0).map(filmByKey).filter(Boolean);
   const liked = Object.entries(mood).filter(([, v]) => v > 0.2).map(([k]) => featureLabel(k));
   const text = [
-    `Movie swipe session (${new Date().toLocaleDateString()}). Pick something from my unwatched films.`,
+    `Movie swipe session (${new Date().toLocaleDateString()}). Pick something from my ${swipe.mode === 'all' ? 'collection (rewatches OK)' : 'unwatched films'}.`,
     `YES (${yes.length}): ${yes.map(r => name(r.f)).join('; ') || 'none'}`,
     `NO (${noFilms.length}): ${noFilms.map(name).join('; ') || 'none'}`,
     liked.length ? `Leaning toward: ${liked.join(', ')}` : '',

@@ -244,7 +244,11 @@
       <div class="swipe-header">
         <div>
           <h2 class="game-title">What are you in the mood for?</h2>
-          <p class="game-desc">Swipe right if you’d watch it tonight, left if not. All cards come from your unwatched films.</p>
+          <p class="game-desc" id="swipeDesc">Swipe right if you’d watch it tonight, left if not. All cards come from your unwatched films.</p>
+        </div>
+        <div class="swipe-mode" role="group" aria-label="Which films">
+          <button class="swipe-mode-btn active" data-mode="unwatched">Unwatched</button>
+          <button class="swipe-mode-btn" data-mode="all">All films</button>
         </div>
       </div>
       <p class="stat-note" id="swipeNoToken" hidden>Connect TMDB (top of the page) for posters, genres and smarter picks.</p>

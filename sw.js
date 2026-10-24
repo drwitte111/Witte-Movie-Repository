@@ -4,7 +4,7 @@
    TMDB posters and API calls are left to the browser's own HTTP cache.
    Bump VERSION when shell files change to drop the old cache.
    ============================================= */
-const VERSION      = 'v3';
+const VERSION      = 'v4';
 const SHELL_CACHE  = `films-shell-${VERSION}`;
 
 const SHELL = [
@@ -13,6 +13,7 @@ const SHELL = [
   'style.css',
   'app.js',
   'web.js',
+  'swipe.js',
   'diary.csv',
   'ratings.csv',
   'manifest.webmanifest',

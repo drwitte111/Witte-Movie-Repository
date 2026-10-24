@@ -30,6 +30,7 @@
         <button class="nav-btn" data-view="stats">Stats</button>
         <button class="nav-btn" data-view="web">Web</button>
         <button class="nav-btn" data-view="game">Game</button>
+        <button class="nav-btn" data-view="swipe">Swipe</button>
       </nav>
       <div class="header-token">
         <input type="password" id="tokenInput" placeholder="TMDB key" autocomplete="off" autocapitalize="off" spellcheck="false" />
@@ -237,6 +238,43 @@
     </div>
   </main>
 
+  <!-- SWIPE VIEW -->
+  <main id="viewSwipe" class="view" style="display:none;">
+    <div class="swipe-layout">
+      <div class="swipe-header">
+        <div>
+          <h2 class="game-title">What are you in the mood for?</h2>
+          <p class="game-desc">Swipe right if you’d watch it tonight, left if not. All cards come from your unwatched films.</p>
+        </div>
+      </div>
+      <p class="stat-note" id="swipeNoToken" hidden>Connect TMDB (top of the page) for posters, genres and smarter picks.</p>
+      <p class="stat-note" id="swipeStatus" hidden></p>
+
+      <div id="swipeDeckWrap">
+        <div class="swipe-progress" id="swipeProgress"></div>
+        <div class="swipe-stack" id="swipeStack"></div>
+        <div class="swipe-buttons">
+          <button class="swipe-btn no" id="swipeNo" aria-label="No">✕</button>
+          <button class="swipe-btn undo" id="swipeUndo" aria-label="Undo">↺</button>
+          <button class="swipe-btn yes" id="swipeYes" aria-label="Yes">♥</button>
+        </div>
+      </div>
+
+      <div id="swipeResults" hidden>
+        <p class="swipe-mood" id="swipeMood"></p>
+        <div class="swipe-result-actions">
+          <button class="cta-primary" id="swipeCopy">Copy for Claude</button>
+          <button class="cta-secondary" id="swipeMore">Swipe 10 more</button>
+          <button class="cta-secondary" id="swipeRestart">Start over</button>
+        </div>
+        <h3 class="section-title">You said yes to</h3>
+        <div class="recent-grid" id="swipeYesGrid"></div>
+        <h3 class="section-title">You might also like</h3>
+        <div class="recent-grid" id="swipePicksGrid"></div>
+      </div>
+    </div>
+  </main>
+
   <!-- FILM DETAIL MODAL -->
   <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
     <div class="modal" onclick="event.stopPropagation()">
@@ -248,5 +286,6 @@
   <script src="cache.js" onerror="void(0)"></script>
   <script src="app.js"></script>
   <script src="web.js"></script>
+  <script src="swipe.js"></script>
 </body>
 </html>

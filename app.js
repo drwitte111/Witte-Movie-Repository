@@ -423,7 +423,7 @@ function markTokenConnected() {
 /* =============================================
    VIEWS
    ============================================= */
-const VIEWS = ['home', 'wall', 'stats', 'web', 'game'];
+const VIEWS = ['home', 'wall', 'stats', 'web', 'game', 'swipe'];
 
 function switchView(view) {
   VIEWS.forEach(v => {
@@ -436,6 +436,7 @@ function switchView(view) {
   window.scrollTo(0, 0);
   if (view === 'wall')  filterWall();
   if (view === 'stats') renderGenres();
+  if (view === 'swipe' && typeof showSwipe === 'function') showSwipe();
 }
 
 const viewId    = v  => 'view' + v.charAt(0).toUpperCase() + v.slice(1);

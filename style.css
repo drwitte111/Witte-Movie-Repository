@@ -982,3 +982,77 @@ label.cta-primary, label.cta-secondary { display: inline-block; cursor: pointer;
 .data-status { font-size: 14px; color: var(--text); margin-bottom: 1rem; }
 .data-status.error { color: #e74c3c; }
 .data-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 0.75rem; }
+
+/* =============================================
+   SWIPE
+   ============================================= */
+.swipe-layout { max-width: 1000px; margin: 0 auto; padding: 2rem; }
+#swipeDeckWrap { max-width: 380px; margin: 0 auto; }
+.swipe-progress { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 10px; }
+.swipe-stack { position: relative; aspect-ratio: 2/3; width: 100%; margin-bottom: 1.25rem; }
+.swipe-card {
+  position: absolute; inset: 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  user-select: none; -webkit-user-select: none;
+  touch-action: pan-y;
+  transform: scale(0.95) translateY(10px);
+}
+.swipe-card.top { transform: none; cursor: grab; }
+.swipe-card.top:active { cursor: grabbing; }
+.swipe-poster { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.swipe-poster.blank {
+  display: flex; align-items: center; justify-content: center; padding: 2rem;
+  font-family: var(--font-display); font-size: 1.6rem; color: var(--cream); text-align: center;
+}
+.swipe-info {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 3.5rem 1rem 1rem;
+  background: linear-gradient(transparent, rgba(0,0,0,0.92) 35%);
+}
+.swipe-title { font-family: var(--font-display); font-size: 1.5rem; color: var(--cream); line-height: 1.15; }
+.swipe-meta { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin: 4px 0 6px; }
+.swipe-genres { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.swipe-overview {
+  font-size: 12px; color: var(--text); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.swipe-stamp {
+  position: absolute; top: 24px; padding: 4px 12px;
+  font-family: var(--font-mono); font-size: 26px; font-weight: 500; letter-spacing: 0.1em;
+  border: 3px solid; border-radius: 8px; opacity: 0; pointer-events: none;
+}
+.swipe-stamp.yes { left: 20px; color: #2ecc71; border-color: #2ecc71; transform: rotate(-14deg); }
+.swipe-stamp.no  { right: 20px; color: #e74c3c; border-color: #e74c3c; transform: rotate(14deg); }
+.swipe-details {
+  position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%;
+  background: rgba(0,0,0,0.6); border: 1px solid var(--border2); color: var(--cream);
+  font-family: var(--font-display); font-style: italic; font-size: 16px;
+}
+.swipe-buttons { display: flex; justify-content: center; align-items: center; gap: 1.5rem; }
+.swipe-btn {
+  width: 64px; height: 64px; border-radius: 50%; font-size: 26px;
+  background: var(--surface); border: 2px solid var(--border2); color: var(--text);
+  transition: transform 0.1s, border-color 0.15s;
+}
+.swipe-btn:active { transform: scale(0.92); }
+.swipe-btn.no  { color: #e74c3c; border-color: rgba(231,76,60,0.6); }
+.swipe-btn.yes { color: #2ecc71; border-color: rgba(46,204,113,0.6); }
+.swipe-btn.undo { width: 46px; height: 46px; font-size: 18px; color: var(--muted); }
+.swipe-btn:disabled { opacity: 0.35; }
+.swipe-mood { font-size: 15px; color: var(--cream); margin-bottom: 1rem; }
+.swipe-result-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 2rem; }
+#swipeResults .section-title { margin: 1.5rem 0 1rem; }
+.swipe-reasons { font-family: var(--font-mono); font-size: 10px; color: var(--gold); margin-top: 2px; }
+@media (max-width: 600px) {
+  .swipe-layout { padding: 0.75rem 1rem 1rem; }
+  .swipe-header .game-title { font-size: 1.3rem; margin-bottom: 0.25rem; }
+  .swipe-header .game-desc { font-size: 13px; margin-bottom: 0.5rem; }
+  /* Card + buttons fit on one screen: height left after header/nav/intro, as a 2:3 card */
+  #swipeDeckWrap { max-width: min(340px, calc((100dvh - 330px) * 0.667)); }
+  .swipe-stack { margin-bottom: 0.75rem; }
+  .swipe-btn { width: 56px; height: 56px; font-size: 22px; }
+}
